@@ -64,7 +64,7 @@ export default function SignUpScreen({ navigation }) {
 
     const showSub = Keyboard.addListener(showEvent, e => {
       Animated.timing(keyboardOffset, {
-        toValue: Platform.OS === 'ios' ? -120 : -195,
+        toValue: Platform.OS === 'ios' ? -120 : -205,
         duration: 250,
         useNativeDriver: true,
       }).start();
@@ -242,6 +242,7 @@ export default function SignUpScreen({ navigation }) {
                 <TextInput
                   style={styles.input}
                   placeholder="Min. 6 characters"
+                  placeholderTextColor="#B0CCCF"
                   secureTextEntry={!showPassword}
                   value={password}
                   onChangeText={setPassword}
@@ -310,6 +311,7 @@ export default function SignUpScreen({ navigation }) {
                 <TextInput
                   style={styles.input}
                   placeholder="Re-type password"
+                  placeholderTextColor="#B0CCCF"
                   secureTextEntry={!showConfirm}
                   value={confirmPassword}
                   onChangeText={setConfirmPassword}
@@ -336,13 +338,6 @@ export default function SignUpScreen({ navigation }) {
               ) : (
                 <>
                   <Text style={styles.signInBtnText}>Create Account</Text>
-                  <View style={styles.signInArrow}>
-                    <MaterialCommunityIcons
-                      name="arrow-right"
-                      size={14}
-                      color="#fff"
-                    />
-                  </View>
                 </>
               )}
             </TouchableOpacity>
