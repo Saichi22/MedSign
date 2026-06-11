@@ -6,8 +6,6 @@ import {
   TouchableOpacity,
   StyleSheet,
   StatusBar,
-  Platform,
-  Image,
   Dimensions,
 } from 'react-native';
 import {
@@ -16,11 +14,12 @@ import {
   useCameraPermission,
   useFrameProcessor,
 } from 'react-native-vision-camera';
-import RNFS from 'react-native-fs';
 import { loadTensorflowModel } from 'react-native-fast-tflite';
 import { useResizePlugin } from 'vision-camera-resize-plugin';
 import { Worklets } from 'react-native-worklets-core';
 import MaterialCommunityIcons from 'react-native-vector-icons/MaterialCommunityIcons';
+
+const MODEL_ASSET = require('../../../../assets/sign_model.tflite');
 
 // ─────────────────────────────────────────────────────────────────────────────
 // ⚠️  SET YOUR PC'S LOCAL IP HERE (run `ipconfig`, look for WiFi IPv4 Address)
@@ -69,29 +68,11 @@ export default function TranslatorScreen() {
 useEffect(() => {
   async function loadModel() {
     try {
-      const destPath = `${RNFS.DocumentDirectoryPath}/sign_model.tflite`;
-
-      // Delete cached copy to force fresh copy after Kotlin patch
-      const exists = await RNFS.exists(destPath);
-      if (exists) {
-        await RNFS.unlink(destPath);
-        console.log('Deleted old cached model');
-      }
-
-      await RNFS.copyFileAssets('sign_model.tflite', destPath);
-      console.log('Model copied to:', destPath);
-
-      const stat = await RNFS.stat(destPath);
-      console.log('File size:', stat.size);
-
-      const uri = `file://${destPath}`;
-      console.log('Loading model from:', uri);
-
-      const m = await loadTensorflowModel({ url: uri });
+      const m = await loadTensorflowModel(MODEL_ASSET);
       console.log('Model loaded successfully!');
       setModelState({ state: 'loaded', model: m });
     } catch (e) {
-      console.error('Model load failed:', e.message);
+      console.error('Model load failed:', e?.message ?? e);
       setModelState({ state: 'error', model: null });
     }
   }
@@ -200,7 +181,7 @@ useEffect(() => {
         <View style={[styles.modelBanner, modelState.state === 'error' && styles.modelBannerError]}>
           <Text style={styles.modelBannerText}>
             {modelState.state === 'error'
-              ? '❌ Model failed — check DEV_PC_IP'
+              ? '❌ Model failed to load'
               : '⏳ Loading model…'}
           </Text>
         </View>
