@@ -11,6 +11,7 @@ import LoginScreen from '../auth/screens/LoginScreen';
 import RegisterScreen from '../auth/screens/RegisterScreen';
 import HomeScreen from '../appTabs/home/screens/HomeScreen';
 import SettingsScreen from '../appTabs/settings/screens/SettingsScreen';
+import TranslatorScreen from '../appTabs/home/screens/TranslatorScreen';
 
 const Stack = createStackNavigator();
 const Tab = createBottomTabNavigator();
@@ -65,6 +66,22 @@ function AppTabs() {
   );
 }
 
+function AppStack() {
+  return (
+    <Stack.Navigator screenOptions={{ headerShown: false }}>
+      {/* Main Bottom Tabs Group */}
+      <Stack.Screen name="MainTabs" component={AppTabs} />
+      
+      {/* Hidden Screens inside the authenticated flow */}
+      <Stack.Screen 
+        name="Translator" 
+        component={TranslatorScreen} 
+        options={{ headerShown: true, title: 'Translator' }} // Adjust header needs here
+      />
+    </Stack.Navigator>
+  );
+}
+
 export default function AppNavigator() {
   const { user } = useAuth();
 
@@ -78,7 +95,7 @@ export default function AppNavigator() {
 
   return (
     <NavigationContainer>
-      {user ? <AppTabs /> : <AuthStack />}
+     {user ? <AppStack /> : <AuthStack />}
     </NavigationContainer>
   );
 }
