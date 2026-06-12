@@ -67,20 +67,9 @@ export default function TranslatorScreen() {
   }, [runInference]);
 
   const frameCountRef = useRef(0);
-  const runOnJS = useRef(
+const runOnJS = useRef(
   Worklets.createRunOnJS((buffer) => {
-
-    if (!isActiveRef.current || !isReadyRef.current) {
-      return;
-    }
-
-    const now = Date.now();
-
-    if (now - lastInferenceRef.current < 1000) {
-      return;
-    }
-
-    lastInferenceRef.current = now;
+    if (!isReadyRef.current) return;
 
     runInferenceRef.current?.(
       buffer?.data ?? buffer
@@ -111,8 +100,16 @@ const frameProcessor = useFrameProcessor(
   (frame) => {
     'worklet';
 
+    const now = Date.now();
+
+    if (now - lastFrameTsRef.current < 200) {
+      return;
+    }
+
+    lastFrameTsRef.current = now;
+
     const resized = resize(frame, {
-      scale: { width: 224, height: 224 },
+      scale: { width: 160, height: 160 },
       pixelFormat: 'rgb',
       dataType: 'float32',
     });
@@ -165,13 +162,13 @@ const frameProcessor = useFrameProcessor(
         (preview + processor) to tear down when the user pressed Stop,
         meaning you had no live preview in the idle state.
       */}
-      <Camera
-        style={StyleSheet.absoluteFill}
-        device={device}
-        isActive={true}
-        frameProcessor={frameProcessor}
-        pixelFormat="rgb"
-      />
+<Camera
+  style={StyleSheet.absoluteFill}
+  device={device}
+  isActive={true}
+  frameProcessor={isActive ? frameProcessor : undefined}
+  pixelFormat="rgb"
+/>
 
       <View style={styles.bracketWrap} pointerEvents="none">
         <View style={[styles.corner, styles.TL]} />

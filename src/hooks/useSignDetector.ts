@@ -113,12 +113,14 @@ export function useSignDetector() {
 let inputArray: Float32Array;
 
 if (ArrayBuffer.isView(resizedBuffer)) {
-  inputArray = Float32Array.from(resizedBuffer as Float32Array);
-} else if (
-  resizedBuffer &&
-  typeof resizedBuffer === 'object'
-) {
-  // vision-camera-resize-plugin object form
+  // ✅ NO COPY — just reinterpret the view
+  inputArray = new Float32Array(
+  (resizedBuffer as ArrayBufferView).buffer,
+  (resizedBuffer as ArrayBufferView).byteOffset,
+  (resizedBuffer as ArrayBufferView).byteLength / 4
+);
+} else if (resizedBuffer && typeof resizedBuffer === 'object') {
+  // ⚠️ still need conversion here (object case is unavoidable)
   inputArray = Float32Array.from(
     Object.values(resizedBuffer as Record<string, number>)
   );
@@ -144,14 +146,13 @@ if (ArrayBuffer.isView(resizedBuffer)) {
        * We cast to Float32Array here because isValidFloat32ArrayLike already
        * confirmed it has BYTES_PER_ELEMENT===4 and a length > 0.
        */
-      const safeArray = Float32Array.from(
-  inputArray,
-  (v) => v
+const safeBuffer = inputArray.buffer.slice(
+  inputArray.byteOffset,
+  inputArray.byteOffset + inputArray.byteLength
 );
-const safeBuffer = safeArray.buffer;
 
       const inferenceStart = Date.now();
-      const outputs = model.runSync([safeBuffer]);
+      const outputs = model.runSync([safeBuffer as ArrayBuffer]);
       const inferenceMs = Date.now() - inferenceStart;
 
       const raw = outputs[0];
