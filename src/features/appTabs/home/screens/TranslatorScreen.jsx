@@ -107,7 +107,6 @@ export default function TranslatorScreen() {
         scale: { width: 224, height: 224 },
         pixelFormat: 'rgb',
         dataType: 'float32',
-        normalize: { mean: [0, 0, 0], std: [255, 255, 255] },
       });
 
       runOnJS(resized);

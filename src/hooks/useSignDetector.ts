@@ -7,6 +7,16 @@
  * File placement:
  *   <project-root>/assets/sign_model.tflite
  *   metro.config.js → resolver.assetExts: [...defaultAssetExts, 'tflite']
+ *
+ * Hermes compatibility notes
+ * ──────────────────────────
+ * Typed arrays that cross the JSI bridge from native C++ into Hermes JS do
+ * NOT preserve their prototype chain. This means:
+ *
+ *   resizedBuffer instanceof Float32Array  →  false  (input from resize plugin)
+ *   outputs[0] instanceof Float32Array     →  false  (output from runSync)
+ *
+ * Both guards must use Hermes-safe alternatives (see FIX A and FIX B below).
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react';
@@ -32,6 +42,27 @@ const MEDICAL_LABELS = new Set([
   'Tumutusok','Lalamunan','Mahirap','Masakit',
   'Nagtatae','Nahihilo','Naiihi','Namamanas','Nanghihina','Nasusuka',
 ]);
+
+/**
+ * Hermes-safe typed-array check.
+ *
+ * `instanceof Float32Array` breaks for native JSI objects under Hermes
+ * because the prototype chain is stripped at the bridge boundary.
+ * `ArrayBuffer.isView()` tests whether the value IS a typed array view
+ * (any subclass of TypedArray or DataView) at the C++ level, which works
+ * correctly regardless of prototype chain — it's a structural check, not
+ * an identity check.
+ *
+ * We additionally confirm `.BYTES_PER_ELEMENT === 4` to rule out Uint8Array
+ * / Int32Array etc., and `.length > 0` to reject empty views.
+ */
+function isValidFloat32ArrayLike(v: unknown): v is ArrayBufferView & { length: number } {
+  return (
+    ArrayBuffer.isView(v) &&
+    (v as { BYTES_PER_ELEMENT?: number }).BYTES_PER_ELEMENT === 4 &&
+    (v as { length?: number }).length! > 0
+  );
+}
 
 export function useSignDetector() {
   const plugin = useTensorflowModel(
@@ -59,7 +90,7 @@ export function useSignDetector() {
     modelRef.current = plugin.model;
   }, [plugin.model]);
 
-  const runInference = useCallback((resizedBuffer: Float32Array) => {
+  const runInference = useCallback((resizedBuffer: unknown) => {
     const model = modelRef.current;
 
     if (model == null) {
@@ -71,8 +102,21 @@ export function useSignDetector() {
     if (now - lastRunRef.current < DEBOUNCE_MS) return;
     lastRunRef.current = now;
 
-    if (resizedBuffer == null || !(resizedBuffer instanceof Float32Array)) {
-      console.warn('[SignDetector] received invalid buffer — skipping, got:', typeof resizedBuffer);
+    /**
+     * FIX A — Hermes-safe input buffer check.
+     *
+     * The old code used `instanceof Float32Array`, which returns false for
+     * native JSI objects under Hermes. `isValidFloat32ArrayLike` uses
+     * `ArrayBuffer.isView()` instead, which works at the C++ level across
+     * the JSI boundary and correctly accepts the resize plugin's output.
+     */
+    if (!isValidFloat32ArrayLike(resizedBuffer)) {
+      console.warn(
+        '[SignDetector] received invalid buffer — skipping.',
+        'ArrayBuffer.isView:', ArrayBuffer.isView(resizedBuffer),
+        'type:', typeof resizedBuffer,
+        'BYTES_PER_ELEMENT:', (resizedBuffer as { BYTES_PER_ELEMENT?: number })?.BYTES_PER_ELEMENT,
+      );
       return;
     }
 
@@ -80,23 +124,18 @@ export function useSignDetector() {
 
     try {
       /**
-       * FIX 1 — Buffer copy that respects byteOffset.
+       * Safe buffer copy that respects byteOffset.
        *
-       * vision-camera-resize-plugin returns a Float32Array *view* into a
-       * shared pool buffer. The view's `.buffer` property refers to the
-       * entire pool (starts at byte 0), while the actual frame data starts
-       * at `.byteOffset`. Calling `.slice().buffer` on the old code copied
-       * the view correctly into a new Float32Array, but then grabbed
-       * `.buffer` which is the pool — not the slice — causing TFLite to
-       * read from the wrong offset.
+       * vision-camera-resize-plugin returns a view into a shared pool.
+       * Float32Array.from() copies only the view's logical elements into a
+       * fresh offset-0 array — `.buffer` on that is exactly 224×224×3×4
+       * bytes starting at 0, which is what runSync expects.
        *
-       * Float32Array.from() copies only the elements in the view's range
-       * into a brand-new, offset-0 typed array, and `.buffer` on THAT is
-       * exactly 224*224*3*4 bytes starting at 0. This is what runSync
-       * expects.
+       * We cast to Float32Array here because isValidFloat32ArrayLike already
+       * confirmed it has BYTES_PER_ELEMENT===4 and a length > 0.
        */
-      const safeArray = Float32Array.from(resizedBuffer);
-      const safeBuffer = safeArray.buffer;
+      const safeArray = Float32Array.from(resizedBuffer as Float32Array, (v) => v / 255);
+const safeBuffer = safeArray.buffer;
 
       const inferenceStart = Date.now();
       const outputs = model.runSync([safeBuffer]);
@@ -109,22 +148,28 @@ export function useSignDetector() {
       }
 
       /**
-       * FIX 2 — Do NOT re-wrap the output.
+       * FIX B — Hermes-safe output handling.
        *
-       * react-native-fast-tflite's runSync() already returns a Float32Array
-       * for each output tensor — it does NOT return a raw ArrayBuffer.
-       * The old code did `new Float32Array(raw as unknown as ArrayBuffer)`,
-       * which treated the Float32Array object *reference* as an ArrayBuffer.
-       * That produced a 1–4 element array of garbage values (memory address
-       * bytes interpreted as floats), which never crossed the 0.75 threshold.
-       *
-       * Cast directly to Float32Array; if the runtime type is wrong the
-       * length check below will catch it.
+       * Under Hermes, runSync() output tensors are native JSI objects that
+       * also fail `instanceof Float32Array`. We use the same structural
+       * check: if it passes isValidFloat32ArrayLike it is a 4-byte typed
+       * array view we can read directly. If it does NOT (e.g. some versions
+       * return a raw ArrayBuffer), we wrap it. This covers both cases.
        */
-      const scores = raw as unknown as Float32Array;
+      let scores: Float32Array;
+      if (isValidFloat32ArrayLike(raw)) {
+        // Already a typed array view (Hermes JSI tensor output, most common)
+        scores = Float32Array.from(raw as Float32Array);
+      } else if (raw instanceof ArrayBuffer || ArrayBuffer.isView(raw)) {
+        // Raw ArrayBuffer fallback (older fast-tflite versions)
+        scores = new Float32Array(raw as ArrayBuffer);
+      } else {
+        console.warn('[SignDetector] unrecognised output type:', typeof raw);
+        return;
+      }
 
-      if (!scores || scores.length === 0) {
-        console.warn('[SignDetector] scores array is empty');
+      if (scores.length === 0) {
+        console.warn('[SignDetector] scores array is empty after unwrap');
         return;
       }
 
@@ -142,7 +187,9 @@ export function useSignDetector() {
       const top3 = indexed.slice(0, 3)
         .map(({ s, i }) => `${LABELS[i] ?? i}=${(s * 100).toFixed(1)}%`)
         .join(' | ');
-      console.log(`[SignDetector] ${inferenceMs}ms | top3: ${top3} | threshold=${CONFIDENCE_THRESHOLD * 100}%`);
+      console.log(
+        `[SignDetector] ${inferenceMs}ms | scores.length=${scores.length} | top3: ${top3} | threshold=${CONFIDENCE_THRESHOLD * 100}%`,
+      );
 
       if (maxVal < CONFIDENCE_THRESHOLD) {
         console.log('[SignDetector] below threshold — no prediction emitted');
