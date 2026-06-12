@@ -64,11 +64,12 @@ export default function TranslatorScreen() {
 
   const [modelState, setModelState] = useState({ state: 'loading', model: null });
   const modelReady = modelState.state === 'loaded';
+  const modelRef = useRef(null);
 
 useEffect(() => {
   async function loadModel() {
     try {
-      const m = await loadTensorflowModel(MODEL_ASSET);
+      const m = await loadTensorflowModel(MODEL_ASSET, []);
       console.log('Model loaded successfully!');
       setModelState({ state: 'loaded', model: m });
     } catch (e) {
@@ -79,12 +80,16 @@ useEffect(() => {
   loadModel();
 }, []);
 
+useEffect(() => {
+  modelRef.current = modelState.model;
+}, [modelState.model]);
+
   const [isActive, setIsActive]     = useState(false);
   const [prediction, setPrediction] = useState(null);
   const [history, setHistory]       = useState([]);
   const lastUpdateRef               = useRef(0);
 
-  const onPrediction = Worklets.createRunOnJS((label, confidence) => {
+  const handlePrediction = (label, confidence) => {
     const now = Date.now();
     if (now - lastUpdateRef.current < DEBOUNCE_MS) return;
     lastUpdateRef.current = now;
@@ -94,12 +99,31 @@ useEffect(() => {
       const next = [{ label, confidence, isMedical, ts: new Date().toLocaleTimeString() }, ...prev];
       return next.slice(0, 5);
     });
+  };
+
+  const runInferenceOnMainThread = Worklets.createRunOnJS((resized) => {
+    const model = modelRef.current;
+    if (!model) return;
+
+    const outputs = model.runSync([resized]);
+    const logits  = Array.from(outputs[0]);
+    const probs   = softmax(logits);
+
+    let bestIdx = 0;
+    let bestVal = probs[0];
+    for (let i = 1; i < probs.length; i++) {
+      if (probs[i] > bestVal) { bestVal = probs[i]; bestIdx = i; }
+    }
+
+    if (bestVal >= CONFIDENCE_THRESHOLD) {
+      handlePrediction(LABELS[bestIdx], Math.round(bestVal * 100));
+    }
   });
 
   const frameProcessor = useFrameProcessor(
     frame => {
       'worklet';
-      if (!isActive || !modelState.model) return;
+      if (!isActive || !modelReady) return;
 
       const resized = resize(frame, {
         scale: { width: 224, height: 224 },
@@ -108,21 +132,9 @@ useEffect(() => {
         normalize: { mean: [0, 0, 0], std: [255, 255, 255] },
       });
 
-      const outputs = modelState.model.runSync([resized]);
-      const logits  = Array.from(outputs[0]);
-      const probs   = softmax(logits);
-
-      let bestIdx = 0;
-      let bestVal = probs[0];
-      for (let i = 1; i < probs.length; i++) {
-        if (probs[i] > bestVal) { bestVal = probs[i]; bestIdx = i; }
-      }
-
-      if (bestVal >= CONFIDENCE_THRESHOLD) {
-        onPrediction(LABELS[bestIdx], Math.round(bestVal * 100));
-      }
+      runInferenceOnMainThread(resized);
     },
-    [isActive, modelState.model],
+    [isActive, modelReady],
   );
 
   useEffect(() => {
