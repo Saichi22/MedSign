@@ -30,7 +30,7 @@ export const LABELS = [
 ];
 
 export const CONFIDENCE_THRESHOLD = 0.75;
-const DEBOUNCE_MS = 600;
+const DEBOUNCE_MS = 1500;
 
 export interface Prediction {
   label: string;
@@ -110,15 +110,25 @@ export function useSignDetector() {
      * `ArrayBuffer.isView()` instead, which works at the C++ level across
      * the JSI boundary and correctly accepts the resize plugin's output.
      */
-    if (!isValidFloat32ArrayLike(resizedBuffer)) {
-      console.warn(
-        '[SignDetector] received invalid buffer — skipping.',
-        'ArrayBuffer.isView:', ArrayBuffer.isView(resizedBuffer),
-        'type:', typeof resizedBuffer,
-        'BYTES_PER_ELEMENT:', (resizedBuffer as { BYTES_PER_ELEMENT?: number })?.BYTES_PER_ELEMENT,
-      );
-      return;
-    }
+let inputArray: Float32Array;
+
+if (ArrayBuffer.isView(resizedBuffer)) {
+  inputArray = Float32Array.from(resizedBuffer as Float32Array);
+} else if (
+  resizedBuffer &&
+  typeof resizedBuffer === 'object'
+) {
+  // vision-camera-resize-plugin object form
+  inputArray = Float32Array.from(
+    Object.values(resizedBuffer as Record<string, number>)
+  );
+} else {
+  console.warn(
+    '[SignDetector] invalid input buffer:',
+    typeof resizedBuffer
+  );
+  return;
+}
 
     console.log(`[SignDetector] running inference on buffer length=${resizedBuffer.length}`);
 
@@ -134,7 +144,10 @@ export function useSignDetector() {
        * We cast to Float32Array here because isValidFloat32ArrayLike already
        * confirmed it has BYTES_PER_ELEMENT===4 and a length > 0.
        */
-      const safeArray = Float32Array.from(resizedBuffer as Float32Array, (v) => v / 255);
+      const safeArray = Float32Array.from(
+  inputArray,
+  (v) => v
+);
 const safeBuffer = safeArray.buffer;
 
       const inferenceStart = Date.now();

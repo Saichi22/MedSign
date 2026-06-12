@@ -51,6 +51,7 @@ export default function TranslatorScreen() {
 
   const [isActive, setIsActive] = useState(false);
   const [history, setHistory] = useState([]);
+  const lastInferenceRef = useRef(0);
 
   useEffect(() => {
     if (!hasPermission) requestPermission();
@@ -67,12 +68,25 @@ export default function TranslatorScreen() {
 
   const frameCountRef = useRef(0);
   const runOnJS = useRef(
-    Worklets.createRunOnJS((buffer) => {
-      frameCountRef.current += 1;
-      console.log(`[TranslatorScreen] ✅ frame #${frameCountRef.current} hit JS thread | byteLength=${buffer?.byteLength ?? 'n/a'}`);
-      runInferenceRef.current?.(buffer);
-    }),
-  ).current;
+  Worklets.createRunOnJS((buffer) => {
+
+    if (!isActiveRef.current || !isReadyRef.current) {
+      return;
+    }
+
+    const now = Date.now();
+
+    if (now - lastInferenceRef.current < 1000) {
+      return;
+    }
+
+    lastInferenceRef.current = now;
+
+    runInferenceRef.current?.(
+      buffer?.data ?? buffer
+    );
+  }),
+).current;
 
   const isActiveRef  = useRef(isActive);
   const isReadyRef   = useRef(isReady);
@@ -93,26 +107,20 @@ export default function TranslatorScreen() {
     );
   }, [prediction, isActive]);
 
-  const frameProcessor = useFrameProcessor(
-    (frame) => {
-      'worklet';
-      if (!isActiveRef.current || !isReadyRef.current) return;
+const frameProcessor = useFrameProcessor(
+  (frame) => {
+    'worklet';
 
-      // FIX 3 — manual throttle replacing the deprecated frameProcessorFps prop
-      const now = Date.now();
-      if (now - lastFrameTsRef.current < FRAME_INTERVAL_MS) return;
-      lastFrameTsRef.current = now;
+    const resized = resize(frame, {
+      scale: { width: 224, height: 224 },
+      pixelFormat: 'rgb',
+      dataType: 'float32',
+    });
 
-      const resized = resize(frame, {
-        scale: { width: 224, height: 224 },
-        pixelFormat: 'rgb',
-        dataType: 'float32',
-      });
-
-      runOnJS(resized);
-    },
-    [runOnJS],
-  );
+    runOnJS(resized);
+  },
+  [runOnJS],
+);
 
   const handleToggle = useCallback(() => {
     setIsActive(prev => {
