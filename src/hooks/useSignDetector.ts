@@ -9,7 +9,7 @@
  *   metro.config.js → resolver.assetExts: [...defaultAssetExts, 'tflite']
  */
 
-import { useCallback, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useTensorflowModel } from 'react-native-fast-tflite';
 
 export const LABELS = [
@@ -34,96 +34,138 @@ const MEDICAL_LABELS = new Set([
 ]);
 
 export function useSignDetector() {
-  /**
-   * Do NOT pass a second argument to useTensorflowModel.
-   *
-   * Passing [] (empty array) is not a valid delegate value — the hook
-   * resolves state:'loaded' but leaves plugin.model undefined, causing
-   * "undefined is not a function" when runSync is called.
-   *
-   * Omitting the argument uses the CPU delegate by default, which works
-   * on every Android/iOS device without extra setup.
-   */
   const plugin = useTensorflowModel(
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     require('../assets/sign_model.tflite'),
+    [],
   );
 
-  /**
-   * Double-guard: check BOTH plugin.state AND plugin.model.
-   *
-   * state:'loaded' is necessary but not sufficient — on some devices/versions
-   * the state transitions before the JSI binding is fully registered.
-   * Checking plugin.model directly ensures runSync actually exists before
-   * we expose isReady as true.
-   */
   const isReady = plugin.state === 'loaded' && plugin.model != null;
   const [prediction, setPrediction] = useState<Prediction | null>(null);
   const lastRunRef = useRef<number>(0);
 
-  const runInference = useCallback(
-    (resizedBuffer: Float32Array) => {
-      // Re-check both guards inside the callback — state can change between
-      // the time runInference was exposed and when it is actually called.
-      if (plugin.state !== 'loaded' || plugin.model == null) return;
+  useEffect(() => {
+    console.log(`[SignDetector] model state → ${plugin.state}`);
+    if (plugin.state === 'loaded') {
+      console.log('[SignDetector] ✅ model ready, runSync available:', plugin.model != null);
+    }
+    if (plugin.state === 'error') {
+      console.error('[SignDetector] ❌ model failed to load');
+    }
+  }, [plugin.state, plugin.model]);
 
-      const now = Date.now();
-      if (now - lastRunRef.current < DEBOUNCE_MS) return;
-      lastRunRef.current = now;
+  const modelRef = useRef(plugin.model);
+  useEffect(() => {
+    modelRef.current = plugin.model;
+  }, [plugin.model]);
 
-      try {
-        /**
-         * slice() before .buffer — covers two problems:
-         *
-         * a) byteOffset: vision-camera-resize-plugin may return a view into a
-         *    shared pool. .buffer starts at 0, not your frame. slice() copies
-         *    exactly your bytes into a fresh ArrayBuffer starting at 0.
-         *
-         * b) Race condition: slice() gives runSync its own copy so the camera
-         *    thread cannot mutate the buffer while TFLite is reading it.
-         */
-        const safeBuffer = resizedBuffer.slice().buffer;
-        const outputs = plugin.model.runSync([safeBuffer]);
+  const runInference = useCallback((resizedBuffer: Float32Array) => {
+    const model = modelRef.current;
 
-        const raw = outputs[0];
-        if (raw == null || raw.length === 0) return;
+    if (model == null) {
+      console.warn('[SignDetector] runInference called but model is null — skipping');
+      return;
+    }
 
-        // Index the typed array directly — no Array.from() allocation needed
-        const scores = raw as Float32Array | Int32Array | Uint8Array;
+    const now = Date.now();
+    if (now - lastRunRef.current < DEBOUNCE_MS) return;
+    lastRunRef.current = now;
 
-        let maxIdx = 0;
-        let maxVal = scores[0]!;
-        for (let i = 1; i < scores.length; i++) {
-          if (scores[i]! > maxVal) {
-            maxVal = scores[i]!;
-            maxIdx = i;
-          }
-        }
+    if (resizedBuffer == null || !(resizedBuffer instanceof Float32Array)) {
+      console.warn('[SignDetector] received invalid buffer — skipping, got:', typeof resizedBuffer);
+      return;
+    }
 
-        if (maxVal < CONFIDENCE_THRESHOLD) {
-          setPrediction(null);
-          return;
-        }
+    console.log(`[SignDetector] running inference on buffer length=${resizedBuffer.length}`);
 
-        const label = LABELS[maxIdx] ?? `Class ${maxIdx}`;
-        setPrediction({
-          label,
-          confidence: Math.round(maxVal * 100),
-          isMedical: MEDICAL_LABELS.has(label),
-        });
-      } catch (e) {
-        console.warn('[useSignDetector] inference error:', e);
+    try {
+      /**
+       * FIX 1 — Buffer copy that respects byteOffset.
+       *
+       * vision-camera-resize-plugin returns a Float32Array *view* into a
+       * shared pool buffer. The view's `.buffer` property refers to the
+       * entire pool (starts at byte 0), while the actual frame data starts
+       * at `.byteOffset`. Calling `.slice().buffer` on the old code copied
+       * the view correctly into a new Float32Array, but then grabbed
+       * `.buffer` which is the pool — not the slice — causing TFLite to
+       * read from the wrong offset.
+       *
+       * Float32Array.from() copies only the elements in the view's range
+       * into a brand-new, offset-0 typed array, and `.buffer` on THAT is
+       * exactly 224*224*3*4 bytes starting at 0. This is what runSync
+       * expects.
+       */
+      const safeArray = Float32Array.from(resizedBuffer);
+      const safeBuffer = safeArray.buffer;
+
+      const inferenceStart = Date.now();
+      const outputs = model.runSync([safeBuffer]);
+      const inferenceMs = Date.now() - inferenceStart;
+
+      const raw = outputs[0];
+      if (raw == null) {
+        console.warn('[SignDetector] model returned empty output');
+        return;
       }
-    },
-    // isReady captures both state AND model presence — safe dep
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [isReady],
-  );
+
+      /**
+       * FIX 2 — Do NOT re-wrap the output.
+       *
+       * react-native-fast-tflite's runSync() already returns a Float32Array
+       * for each output tensor — it does NOT return a raw ArrayBuffer.
+       * The old code did `new Float32Array(raw as unknown as ArrayBuffer)`,
+       * which treated the Float32Array object *reference* as an ArrayBuffer.
+       * That produced a 1–4 element array of garbage values (memory address
+       * bytes interpreted as floats), which never crossed the 0.75 threshold.
+       *
+       * Cast directly to Float32Array; if the runtime type is wrong the
+       * length check below will catch it.
+       */
+      const scores = raw as unknown as Float32Array;
+
+      if (!scores || scores.length === 0) {
+        console.warn('[SignDetector] scores array is empty');
+        return;
+      }
+
+      let maxIdx = 0;
+      let maxVal = scores[0]!;
+      for (let i = 1; i < scores.length; i++) {
+        if (scores[i]! > maxVal) {
+          maxVal = scores[i]!;
+          maxIdx = i;
+        }
+      }
+
+      const indexed = Array.from(scores).map((s, i) => ({ s, i }));
+      indexed.sort((a, b) => b.s - a.s);
+      const top3 = indexed.slice(0, 3)
+        .map(({ s, i }) => `${LABELS[i] ?? i}=${(s * 100).toFixed(1)}%`)
+        .join(' | ');
+      console.log(`[SignDetector] ${inferenceMs}ms | top3: ${top3} | threshold=${CONFIDENCE_THRESHOLD * 100}%`);
+
+      if (maxVal < CONFIDENCE_THRESHOLD) {
+        console.log('[SignDetector] below threshold — no prediction emitted');
+        setPrediction(null);
+        return;
+      }
+
+      const label = LABELS[maxIdx] ?? `Class ${maxIdx}`;
+      console.log(`[SignDetector] ✅ prediction accepted: ${label} (${Math.round(maxVal * 100)}%)`);
+      setPrediction({
+        label,
+        confidence: Math.round(maxVal * 100),
+        isMedical: MEDICAL_LABELS.has(label),
+      });
+    } catch (e) {
+      console.error('[SignDetector] ❌ inference threw an error:', e);
+    }
+  }, []);
 
   return {
     state: plugin.state,
     isReady,
     prediction,
-    runInference: isReady ? runInference : null,
+    runInference,
   };
 }

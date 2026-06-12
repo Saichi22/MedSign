@@ -1,5 +1,5 @@
 // src/features/appTabs/home/screens/TranslatorScreen.jsx
-import React, { useRef, useEffect, useState, useCallback, useMemo } from 'react';
+import React, { useRef, useEffect, useState, useCallback } from 'react';
 import {
   View,
   Text,
@@ -32,6 +32,16 @@ const COLOR = {
   green:      '#10B981',
 };
 
+/**
+ * FIX 3 — Manual frame throttle in the worklet.
+ *
+ * In react-native-vision-camera v4, `frameProcessorFps` is deprecated and
+ * has no effect on actual frame delivery rate. Frames still arrive at the
+ * full camera FPS (often 30–60). We throttle manually here so that
+ * runInference is called at ~5 fps, matching the original intent.
+ */
+const FRAME_INTERVAL_MS = 200; // ~5 fps
+
 export default function TranslatorScreen() {
   const { hasPermission, requestPermission } = useCameraPermission();
   const device = useCameraDevice('front');
@@ -46,36 +56,36 @@ export default function TranslatorScreen() {
     if (!hasPermission) requestPermission();
   }, [hasPermission, requestPermission]);
 
-  /**
-   * FIX — THE FREEZE ROOT CAUSE:
-   *
-   * Worklets.createRunOnJS() allocates a native JSI function object.
-   * Putting it inside useCallback means a NEW native object is created on
-   * every render where [runInference] changes — but more critically, the
-   * old one is not immediately released, and the worklet thread may still
-   * hold a reference to it, causing a data race that blocks the JS thread.
-   *
-   * The correct pattern is:
-   *   1. Keep a stable ref to runInference (updated via useEffect, never
-   *      triggers a re-render).
-   *   2. Call createRunOnJS ONCE at mount, pointing at a wrapper that reads
-   *      from the ref — so the JSI object is created once and never replaced
-   *      while the camera is open.
-   */
+  useEffect(() => {
+    console.log(`[TranslatorScreen] modelState=${modelState} isReady=${isReady}`);
+  }, [modelState, isReady]);
+
   const runInferenceRef = useRef(runInference);
   useEffect(() => {
     runInferenceRef.current = runInference;
   }, [runInference]);
 
-  // Created ONCE at mount — the worklet always calls the same JSI function.
-  // The ref wrapper means it always uses the latest runInference internally.
+  const frameCountRef = useRef(0);
   const runOnJS = useRef(
     Worklets.createRunOnJS((buffer) => {
+      frameCountRef.current += 1;
+      console.log(`[TranslatorScreen] ✅ frame #${frameCountRef.current} hit JS thread | byteLength=${buffer?.byteLength ?? 'n/a'}`);
       runInferenceRef.current?.(buffer);
     }),
   ).current;
 
-  // History update
+  const isActiveRef  = useRef(isActive);
+  const isReadyRef   = useRef(isReady);
+  /**
+   * FIX 3 (continued) — worklet-side timestamp ref for manual throttle.
+   * Must be a plain ref (not React state) so it's accessible from the
+   * worklet thread without crossing the JS bridge on every frame.
+   */
+  const lastFrameTsRef = useRef(0);
+
+  useEffect(() => { isActiveRef.current = isActive; }, [isActive]);
+  useEffect(() => { isReadyRef.current  = isReady;  }, [isReady]);
+
   useEffect(() => {
     if (!prediction || !isActive) return;
     setHistory(prev =>
@@ -83,11 +93,15 @@ export default function TranslatorScreen() {
     );
   }, [prediction, isActive]);
 
-  // Frame processor — worklet thread. Only resize + hand off; no inference here.
   const frameProcessor = useFrameProcessor(
     (frame) => {
       'worklet';
-      if (!isActive || !isReady) return;
+      if (!isActiveRef.current || !isReadyRef.current) return;
+
+      // FIX 3 — manual throttle replacing the deprecated frameProcessorFps prop
+      const now = Date.now();
+      if (now - lastFrameTsRef.current < FRAME_INTERVAL_MS) return;
+      lastFrameTsRef.current = now;
 
       const resized = resize(frame, {
         scale: { width: 224, height: 224 },
@@ -98,16 +112,18 @@ export default function TranslatorScreen() {
 
       runOnJS(resized);
     },
-    // runOnJS is stable (ref.current); isReady and isActive are primitives — safe
-    [isActive, isReady, runOnJS],
+    [runOnJS],
   );
 
   const handleToggle = useCallback(() => {
     setIsActive(prev => {
+      const next = !prev;
+      console.log(`[TranslatorScreen] session ${next ? 'STARTED' : 'STOPPED'}`);
+      console.log(`[TranslatorScreen] isReady=${isReady} at toggle time`);
       if (prev) setHistory([]);
-      return !prev;
+      return next;
     });
-  }, []);
+  }, [isReady]);
 
   if (!hasPermission) {
     return (
@@ -134,13 +150,20 @@ export default function TranslatorScreen() {
     <View style={styles.root}>
       <StatusBar barStyle="light-content" backgroundColor={COLOR.tealDeep} />
 
+      {/*
+        FIX 4 — Camera is always active (isActive={true}) so the preview
+        is always visible and the frame processor keeps running.
+        The isActiveRef inside the worklet gates inference on/off instead.
+        Previously, isActive={isActive} caused the entire camera session
+        (preview + processor) to tear down when the user pressed Stop,
+        meaning you had no live preview in the idle state.
+      */}
       <Camera
         style={StyleSheet.absoluteFill}
         device={device}
-        isActive={isActive}
-        frameProcessor={isActive ? frameProcessor : undefined}
-        frameProcessorFps={5}
-        pixelFormat="yuv"
+        isActive={true}
+        frameProcessor={frameProcessor}
+        pixelFormat="rgb"
       />
 
       <View style={styles.bracketWrap} pointerEvents="none">
