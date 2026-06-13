@@ -40,7 +40,7 @@ const COLOR = {
  * full camera FPS (often 30–60). We throttle manually here so that
  * runInference is called at ~5 fps, matching the original intent.
  */
-const FRAME_INTERVAL_MS = 200; // ~5 fps
+const FRAME_INTERVAL_MS = 1600;
 
 export default function TranslatorScreen() {
   const { hasPermission, requestPermission } = useCameraPermission();
@@ -102,9 +102,7 @@ const frameProcessor = useFrameProcessor(
 
     const now = Date.now();
 
-    if (now - lastFrameTsRef.current < 200) {
-      return;
-    }
+    if (now - lastFrameTsRef.current < 1600) return;
 
     lastFrameTsRef.current = now;
 
