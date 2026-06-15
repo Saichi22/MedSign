@@ -1,4 +1,3 @@
-// src/features/appTabs/home/screens/TranslatorScreen.jsx
 import React, { useRef, useEffect, useState, useCallback } from 'react';
 import {
   View,
@@ -6,7 +5,7 @@ import {
   TouchableOpacity,
   StyleSheet,
   StatusBar,
-  Dimensions,
+  ScrollView,
 } from 'react-native';
 import {
   Camera,
@@ -19,75 +18,79 @@ import { Worklets } from 'react-native-worklets-core';
 import { useSignDetector } from '../../../../hooks/useSignDetector';
 import MaterialCommunityIcons from 'react-native-vector-icons/MaterialCommunityIcons';
 
-const { width: SCREEN_W } = Dimensions.get('window');
+import { COLOR } from '../../../../styles/colors/theme';
+import { styles } from '../../../../styles/colors/TranslatorScreenStyle';
 
-const COLOR = {
-  tealDeep:   '#0D4F5C',
-  tealBright: '#7EDDE3',
-  tealLight:  '#B2EEF1',
-  white:      '#FFFFFF',
-  overlay:    'rgba(13,79,92,0.82)',
-  red:        '#EF4444',
-  amber:      '#F59E0B',
-  green:      '#10B981',
-};
-
-/**
- * FIX 3 — Manual frame throttle in the worklet.
- *
- * In react-native-vision-camera v4, `frameProcessorFps` is deprecated and
- * has no effect on actual frame delivery rate. Frames still arrive at the
- * full camera FPS (often 30–60). We throttle manually here so that
- * runInference is called at ~5 fps, matching the original intent.
- */
-const FRAME_INTERVAL_MS = 1600;
+const FRAME_INTERVAL_MS = 2000;
+const EXPECTED_SIZE = 160 * 160 * 3; 
 
 export default function TranslatorScreen() {
   const { hasPermission, requestPermission } = useCameraPermission();
   const device = useCameraDevice('front');
   const { resize } = useResizePlugin();
-  const { state: modelState, isReady, prediction, runInference } = useSignDetector();
+
+  const { state: modelState, isReady, prediction, reset, runInference } = useSignDetector();
   const modelReady = isReady;
 
   const [isActive, setIsActive] = useState(false);
   const [history, setHistory] = useState([]);
-  const lastInferenceRef = useRef(0);
 
   useEffect(() => {
     if (!hasPermission) requestPermission();
   }, [hasPermission, requestPermission]);
 
-  useEffect(() => {
-    console.log(`[TranslatorScreen] modelState=${modelState} isReady=${isReady}`);
-  }, [modelState, isReady]);
-
   const runInferenceRef = useRef(runInference);
-  useEffect(() => {
-    runInferenceRef.current = runInference;
-  }, [runInference]);
+  useEffect(() => { runInferenceRef.current = runInference; }, [runInference]);
 
-  const frameCountRef = useRef(0);
-const runOnJS = useRef(
-  Worklets.createRunOnJS((buffer) => {
-    if (!isReadyRef.current) return;
+  const isReadyRef = useRef(isReady);
+  useEffect(() => { isReadyRef.current = isReady; }, [isReady]);
 
-    runInferenceRef.current?.(
-      buffer?.data ?? buffer
-    );
-  }),
-).current;
+  // JS Bridge Handler accepts processed plain structures directly
+  const runOnJS = useRef(
+    Worklets.createRunOnJS((dataPayload) => {
+      if (!isReadyRef.current) return;
+      runInferenceRef.current?.(dataPayload);
+    }),
+  ).current;
 
-  const isActiveRef  = useRef(isActive);
-  const isReadyRef   = useRef(isReady);
-  /**
-   * FIX 3 (continued) — worklet-side timestamp ref for manual throttle.
-   * Must be a plain ref (not React state) so it's accessible from the
-   * worklet thread without crossing the JS bridge on every frame.
-   */
   const lastFrameTsRef = useRef(0);
 
-  useEffect(() => { isActiveRef.current = isActive; }, [isActive]);
-  useEffect(() => { isReadyRef.current  = isReady;  }, [isReady]);
+  const frameProcessor = useFrameProcessor(
+    (frame) => {
+      'worklet';
+      if (!isReadyRef.current) return;
+
+      const now = Date.now();
+      if (now - lastFrameTsRef.current < FRAME_INTERVAL_MS) return;
+      lastFrameTsRef.current = now;
+
+      const resized = resize(frame, {
+        scale: { width: 160, height: 160 },
+        pixelFormat: 'rgb',
+        dataType: 'float32',
+      });
+      
+      if (resized != null) {
+        // Convert host view elements into a direct plain numeric array 
+        // to prevent thread-boundary pointer drops
+        const plainArray = new Array(EXPECTED_SIZE);
+        for (let i = 0; i < EXPECTED_SIZE; i++) {
+          const rawPixel = resized[i] || 0.0;
+          
+          // --- CONFIGURATION ZONE ---
+          // If your model still stays completely quiet, swap the active formula below:
+          
+          // Formula A: Normalization [0, 1] 
+          plainArray[i] = rawPixel / 255.0;
+
+          // Formula B: Normalization [-1, 1] (Uncomment below and comment out Formula A if needed)
+          // plainArray[i] = (rawPixel / 127.5) - 1.0;
+        }
+        runOnJS(plainArray);
+      }
+    },
+    [runOnJS],
+  );
 
   useEffect(() => {
     if (!prediction || !isActive) return;
@@ -96,44 +99,28 @@ const runOnJS = useRef(
     );
   }, [prediction, isActive]);
 
-const frameProcessor = useFrameProcessor(
-  (frame) => {
-    'worklet';
-
-    const now = Date.now();
-
-    if (now - lastFrameTsRef.current < 1600) return;
-
-    lastFrameTsRef.current = now;
-
-    const resized = resize(frame, {
-      scale: { width: 160, height: 160 },
-      pixelFormat: 'rgb',
-      dataType: 'float32',
-    });
-
-    runOnJS(resized);
-  },
-  [runOnJS],
-);
-
   const handleToggle = useCallback(() => {
     setIsActive(prev => {
-      const next = !prev;
-      console.log(`[TranslatorScreen] session ${next ? 'STARTED' : 'STOPPED'}`);
-      console.log(`[TranslatorScreen] isReady=${isReady} at toggle time`);
-      if (prev) setHistory([]);
-      return next;
+      if (prev) {
+        reset();
+        setHistory([]);
+      }
+      return !prev;
     });
-  }, [isReady]);
+  }, [reset]);
 
   if (!hasPermission) {
     return (
       <View style={styles.centeredFill}>
-        <MaterialCommunityIcons name="camera-off" size={48} color={COLOR.tealLight} />
-        <Text style={styles.permText}>Camera permission is required.</Text>
-        <TouchableOpacity style={styles.permBtn} onPress={requestPermission}>
-          <Text style={styles.permBtnText}>Grant Permission</Text>
+        <View style={styles.emptyIconWrap}>
+          <MaterialCommunityIcons name="camera-off" size={28} color={COLOR.tealBright} />
+        </View>
+        <Text style={styles.emptyTitle}>Camera Access Needed</Text>
+        <Text style={styles.emptyBody}>
+          Sign detection requires access to your camera to read hand gestures in real time.
+        </Text>
+        <TouchableOpacity style={styles.primaryBtn} onPress={requestPermission}>
+          <Text style={styles.primaryBtnText}>Grant Permission</Text>
         </TouchableOpacity>
       </View>
     );
@@ -142,8 +129,11 @@ const frameProcessor = useFrameProcessor(
   if (!device) {
     return (
       <View style={styles.centeredFill}>
-        <MaterialCommunityIcons name="camera-off" size={48} color={COLOR.tealLight} />
-        <Text style={styles.permText}>No camera device found.</Text>
+        <View style={styles.emptyIconWrap}>
+          <MaterialCommunityIcons name="camera-off" size={28} color={COLOR.tealBright} />
+        </View>
+        <Text style={styles.emptyTitle}>No Camera Found</Text>
+        <Text style={styles.emptyBody}>A front-facing camera is required for sign detection.</Text>
       </View>
     );
   }
@@ -152,137 +142,145 @@ const frameProcessor = useFrameProcessor(
     <View style={styles.root}>
       <StatusBar barStyle="light-content" backgroundColor={COLOR.tealDeep} />
 
-      {/*
-        FIX 4 — Camera is always active (isActive={true}) so the preview
-        is always visible and the frame processor keeps running.
-        The isActiveRef inside the worklet gates inference on/off instead.
-        Previously, isActive={isActive} caused the entire camera session
-        (preview + processor) to tear down when the user pressed Stop,
-        meaning you had no live preview in the idle state.
-      */}
-<Camera
-  style={StyleSheet.absoluteFill}
-  device={device}
-  isActive={true}
-  frameProcessor={isActive ? frameProcessor : undefined}
-  pixelFormat="rgb"
-/>
-
-      <View style={styles.bracketWrap} pointerEvents="none">
-        <View style={[styles.corner, styles.TL]} />
-        <View style={[styles.corner, styles.TR]} />
-        <View style={[styles.corner, styles.BL]} />
-        <View style={[styles.corner, styles.BR]} />
-      </View>
-
-      <View style={styles.topBar}>
-        <Text style={styles.topTitle}>Sign Translator</Text>
-        <View style={[styles.statusPill, isActive ? styles.pillActive : styles.pillIdle]}>
-          <View style={[styles.dot, isActive ? styles.dotActive : styles.dotIdle]} />
-          <Text style={styles.pillText}>{isActive ? 'LIVE' : 'IDLE'}</Text>
+      {/* ── Header ── */}
+      <View style={styles.header}>
+        <View style={styles.headerBlob} />
+        <View style={styles.headerTop}>
+          <View>
+            <Text style={styles.headerEyebrow}>Live Detection</Text>
+            <Text style={styles.headerTitle}>Sign Translator</Text>
+          </View>
+          <View style={[styles.liveBadge, isActive && styles.liveBadgeActive]}>
+            <View style={[styles.liveDot, isActive && styles.liveDotActive]} />
+            <Text style={[styles.liveText, isActive && styles.liveTextActive]}>
+              {isActive ? 'LIVE' : 'IDLE'}
+            </Text>
+          </View>
         </View>
       </View>
 
-      {!modelReady && (
-        <View style={[styles.modelBanner, modelState === 'error' && styles.modelBannerError]}>
-          <Text style={styles.modelBannerText}>
-            {modelState === 'error' ? '❌ Model failed to load' : '⏳ Loading model…'}
-          </Text>
-        </View>
-      )}
-
-      {isActive && prediction && (
-        <View style={[styles.predictionBadge, prediction.isMedical && styles.predictionMedical]}>
-          <Text style={styles.predictionLabel}>{prediction.label}</Text>
-          <Text style={styles.predictionConf}>{prediction.confidence}% confidence</Text>
-          {prediction.isMedical && (
-            <View style={styles.medicalTag}>
-              <MaterialCommunityIcons name="medical-bag" size={12} color={COLOR.amber} />
-              <Text style={styles.medicalTagText}>Medical Sign</Text>
-            </View>
-          )}
-        </View>
-      )}
-
-      <View style={styles.bottomPanel}>
-        {history.length > 0 && (
-          <View style={styles.historyStrip}>
-            {history.map((h, i) => (
-              <View key={i} style={[styles.historyChip, h.isMedical && styles.historyChipMedical]}>
-                <Text style={styles.historyChipText}>{h.label}</Text>
-              </View>
-            ))}
+      <ScrollView
+        style={{ flex: 1 }}
+        contentContainerStyle={styles.scrollContent}
+        showsVerticalScrollIndicator={false}
+      >
+        {/* ── Model loading banner ── */}
+        {!modelReady && (
+          <View style={[styles.bannerCard, modelState === 'error' && styles.bannerCardError]}>
+            <MaterialCommunityIcons
+              name={modelState === 'error' ? 'alert-circle-outline' : 'clock-outline'}
+              size={16}
+              color={modelState === 'error' ? COLOR.red : COLOR.amber}
+            />
+            <Text style={[styles.bannerText, modelState === 'error' && styles.bannerTextError]}>
+              {modelState === 'error' ? 'Model configuration runtime asset missing' : 'Loading detection model…'}
+            </Text>
           </View>
         )}
 
+        {/* ── Viewfinder card ── */}
+        <View style={styles.card}>
+          <View style={styles.cardHeader}>
+            <View style={styles.cardTitleRow}>
+              <View style={styles.cardIconWrap}>
+                <MaterialCommunityIcons name="camera" size={18} color={COLOR.tealBright} />
+              </View>
+              <View>
+                <Text style={styles.cardTitle}>Camera Feed</Text>
+                <Text style={styles.cardSub}>Point at signing hands</Text>
+              </View>
+            </View>
+          </View>
+
+          <View style={styles.viewfinderWrap}>
+            <Camera
+              style={StyleSheet.absoluteFill}
+              device={device}
+              isActive={true}
+              frameProcessor={isActive ? frameProcessor : undefined}
+              pixelFormat="rgb"
+            />
+            <View style={[styles.corner, styles.cornerTL]} pointerEvents="none" />
+            <View style={[styles.corner, styles.cornerTR]} pointerEvents="none" />
+            <View style={[styles.corner, styles.cornerBL]} pointerEvents="none" />
+            <View style={[styles.corner, styles.cornerBR]} pointerEvents="none" />
+          </View>
+        </View>
+
+        {/* ── Current prediction card ── */}
+        {prediction ? (
+          <View style={[styles.card, prediction.isMedical && styles.cardMedical]}>
+            <Text style={styles.sectionLabel}>CURRENT SIGN</Text>
+            <Text style={styles.predictionLabel}>{prediction.label}</Text>
+            <View style={styles.predictionMeta}>
+              <Text style={styles.predictionConf}>{prediction.confidence}% confidence</Text>
+              {prediction.isMedical && (
+                <View style={styles.medicalTag}>
+                  <MaterialCommunityIcons name="medical-bag" size={12} color={COLOR.amber} />
+                  <Text style={styles.medicalTagText}>Medical Sign</Text>
+                </View>
+              )}
+            </View>
+          </View>
+        ) : (
+          <View style={styles.outputBox}>
+            <Text style={styles.sectionLabel}>TRANSLATION OUTPUT</Text>
+            <Text style={styles.outputTextMuted}>
+              {isActive ? 'Listening for signs…' : 'Start a session to see translations'}
+            </Text>
+          </View>
+        )}
+
+        {/* ── History ── */}
+        {history.length > 0 && (
+          <>
+            <Text style={styles.sectionLabelSpaced}>RECENT SIGNS</Text>
+            <View style={styles.card}>
+              {history.map((h, i) => (
+                <View
+                  key={i}
+                  style={[
+                    styles.historyRow,
+                    i < history.length - 1 && styles.historyRowBorder,
+                  ]}
+                >
+                  <View style={[styles.historyIconWrap, h.isMedical && styles.historyIconMedical]}>
+                    <MaterialCommunityIcons
+                      name={h.isMedical ? 'medical-bag' : 'sign-language'}
+                      size={15}
+                      color={h.isMedical ? COLOR.amber : COLOR.tealBright}
+                    />
+                  </View>
+                  <View style={{ flex: 1, marginLeft: 12 }}>
+                    <Text style={styles.historySign}>{h.label}</Text>
+                    {h.isMedical && (
+                      <Text style={styles.historyMedicalLabel}>Medical Sign</Text>
+                    )}
+                  </View>
+                  <Text style={styles.historyTime}>{h.ts}</Text>
+                </View>
+              ))}
+            </View>
+          </>
+        )}
+
+        {/* ── CTA ── */}
         <TouchableOpacity
-          style={[styles.actionBtn, isActive && styles.actionBtnStop]}
+          style={[styles.primaryBtn, isActive && styles.stopBtn]}
           onPress={handleToggle}
           disabled={!modelReady}
           activeOpacity={0.85}
         >
           <MaterialCommunityIcons
             name={isActive ? 'stop-circle-outline' : 'camera-outline'}
-            size={22}
+            size={20}
             color={isActive ? COLOR.red : COLOR.tealDeep}
           />
-          <Text style={[styles.actionBtnText, isActive && styles.actionBtnTextStop]}>
-            {isActive ? 'Stop' : modelReady ? 'Start Translation' : 'Loading model…'}
+          <Text style={[styles.primaryBtnText, isActive && styles.stopBtnText]}>
+            {isActive ? 'Stop Session' : modelReady ? 'Start Translation' : 'Loading model…'}
           </Text>
         </TouchableOpacity>
-      </View>
+      </ScrollView>
     </View>
   );
 }
-
-const styles = StyleSheet.create({
-  root:         { flex: 1, backgroundColor: '#000' },
-  centeredFill: { flex: 1, backgroundColor: COLOR.tealDeep, alignItems: 'center', justifyContent: 'center', padding: 24 },
-  permText:     { color: COLOR.white, fontSize: 16, textAlign: 'center', marginVertical: 16 },
-  permBtn:      { backgroundColor: COLOR.tealBright, borderRadius: 12, paddingHorizontal: 24, paddingVertical: 12 },
-  permBtnText:  { color: COLOR.tealDeep, fontWeight: '700', fontSize: 15 },
-
-  topBar: {
-    position: 'absolute', top: 0, left: 0, right: 0,
-    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
-    paddingHorizontal: 20, paddingTop: 52, paddingBottom: 14,
-    backgroundColor: COLOR.overlay,
-  },
-  topTitle:   { color: COLOR.white, fontSize: 17, fontWeight: '700', letterSpacing: 0.3 },
-  statusPill: { flexDirection: 'row', alignItems: 'center', borderRadius: 20, paddingHorizontal: 12, paddingVertical: 4 },
-  pillActive: { backgroundColor: 'rgba(16,185,129,0.25)', borderWidth: 1, borderColor: COLOR.green },
-  pillIdle:   { backgroundColor: 'rgba(255,255,255,0.10)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.3)' },
-  dot:        { width: 7, height: 7, borderRadius: 4, marginRight: 6 },
-  dotActive:  { backgroundColor: COLOR.green },
-  dotIdle:    { backgroundColor: 'rgba(255,255,255,0.5)' },
-  pillText:   { color: COLOR.white, fontSize: 11, fontWeight: '700', letterSpacing: 1 },
-
-  modelBanner:       { position: 'absolute', top: 110, alignSelf: 'center', backgroundColor: 'rgba(245,158,11,0.85)', borderRadius: 20, paddingHorizontal: 16, paddingVertical: 6 },
-  modelBannerError:  { backgroundColor: 'rgba(239,68,68,0.85)' },
-  modelBannerText:   { color: '#000', fontSize: 13, fontWeight: '600' },
-
-  bracketWrap: { ...StyleSheet.absoluteFillObject, margin: 40 },
-  corner:      { position: 'absolute', width: 28, height: 28, borderColor: COLOR.tealBright, borderWidth: 2.5 },
-  TL: { top: 0, left: 0, borderRightWidth: 0, borderBottomWidth: 0, borderTopLeftRadius: 4 },
-  TR: { top: 0, right: 0, borderLeftWidth: 0, borderBottomWidth: 0, borderTopRightRadius: 4 },
-  BL: { bottom: 0, left: 0, borderRightWidth: 0, borderTopWidth: 0, borderBottomLeftRadius: 4 },
-  BR: { bottom: 0, right: 0, borderLeftWidth: 0, borderTopWidth: 0, borderBottomRightRadius: 4 },
-
-  predictionBadge:   { position: 'absolute', alignSelf: 'center', bottom: 195, backgroundColor: 'rgba(13,79,92,0.92)', borderRadius: 18, paddingHorizontal: 28, paddingVertical: 14, alignItems: 'center', borderWidth: 1, borderColor: COLOR.tealBright, minWidth: 180 },
-  predictionMedical: { borderColor: COLOR.amber },
-  predictionLabel:   { color: COLOR.white, fontSize: 36, fontWeight: '800', letterSpacing: 1 },
-  predictionConf:    { color: COLOR.tealLight, fontSize: 13, marginTop: 2 },
-  medicalTag:        { flexDirection: 'row', alignItems: 'center', marginTop: 6, gap: 4 },
-  medicalTagText:    { color: COLOR.amber, fontSize: 12, fontWeight: '600' },
-
-  bottomPanel:        { position: 'absolute', bottom: 0, left: 0, right: 0, backgroundColor: COLOR.overlay, paddingBottom: 32, paddingTop: 14, paddingHorizontal: 20, alignItems: 'center' },
-  historyStrip:       { flexDirection: 'row', gap: 8, marginBottom: 14, flexWrap: 'wrap', justifyContent: 'center' },
-  historyChip:        { backgroundColor: 'rgba(126,221,227,0.15)', borderRadius: 20, paddingHorizontal: 14, paddingVertical: 5, borderWidth: 1, borderColor: 'rgba(126,221,227,0.35)' },
-  historyChipMedical: { borderColor: 'rgba(245,158,11,0.5)', backgroundColor: 'rgba(245,158,11,0.10)' },
-  historyChipText:    { color: COLOR.tealLight, fontSize: 13, fontWeight: '600' },
-
-  actionBtn:         { flexDirection: 'row', alignItems: 'center', gap: 10, backgroundColor: COLOR.tealBright, borderRadius: 16, paddingHorizontal: 32, paddingVertical: 15, width: SCREEN_W - 40, justifyContent: 'center' },
-  actionBtnStop:     { backgroundColor: 'rgba(239,68,68,0.12)', borderWidth: 1.5, borderColor: COLOR.red },
-  actionBtnText:     { color: COLOR.tealDeep, fontSize: 16, fontWeight: '700' },
-  actionBtnTextStop: { color: COLOR.red },
-});

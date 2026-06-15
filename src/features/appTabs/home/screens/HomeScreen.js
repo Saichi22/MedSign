@@ -1,3 +1,4 @@
+// HomeScreen.js
 import React, { useRef, useEffect, useState, useCallback } from 'react';
 import {
   View,
@@ -161,7 +162,7 @@ export default function HomeScreen() {
         </View>
 
         <View style={styles.statsRow}>
-          <StatBadge icon="translate"         value="128"  label="Sessions" />
+          <StatBadge icon="camera"         value="128"  label="Sessions" />
           <View style={styles.statDivider} />
           <StatBadge icon="clock-outline"     value="2.1s" label="Avg. Speed" />
           <View style={styles.statDivider} />
@@ -175,7 +176,7 @@ export default function HomeScreen() {
           <View style={styles.cardHeader}>
             <View style={styles.cardTitleRow}>
               <View style={styles.cardIconWrap}>
-                <MaterialCommunityIcons name="sign-language" size={18} color={COLOR.tealBright} />
+                <MaterialCommunityIcons name="camera" size={18} color={COLOR.tealBright} />
               </View>
               <View>
                 <Text style={styles.cardTitle}>MedSign Translator</Text>

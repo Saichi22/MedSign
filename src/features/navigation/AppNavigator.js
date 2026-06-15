@@ -76,7 +76,7 @@ function AppStack() {
       <Stack.Screen 
         name="Translator" 
         component={TranslatorScreen} 
-        options={{ headerShown: true, title: 'Translator' }} // Adjust header needs here
+        options={{ headerShown: false, title: 'Translator' }} // Adjust header needs here
       />
     </Stack.Navigator>
   );
