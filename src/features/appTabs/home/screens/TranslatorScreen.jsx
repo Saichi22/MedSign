@@ -22,7 +22,12 @@ import { COLOR } from '../../../../styles/colors/theme';
 import { styles } from '../../../../styles/colors/TranslatorScreenStyle';
 
 const FRAME_INTERVAL_MS = 2000;
-const EXPECTED_SIZE = 160 * 160 * 3; 
+
+// ── FIXED: Must match model's input_1 shape: [null, 224, 224, 3] ──
+const MODEL_WIDTH = 224;
+const MODEL_HEIGHT = 224;
+const MODEL_CHANNELS = 3;
+const EXPECTED_SIZE = MODEL_WIDTH * MODEL_HEIGHT * MODEL_CHANNELS; // 150,528
 
 export default function TranslatorScreen() {
   const { hasPermission, requestPermission } = useCameraPermission();
@@ -45,9 +50,9 @@ export default function TranslatorScreen() {
   const isReadyRef = useRef(isReady);
   useEffect(() => { isReadyRef.current = isReady; }, [isReady]);
 
-  // JS Bridge Handler accepts processed plain structures directly
+  // ── Stable JS bridge — created once, refs keep it current ──
   const runOnJS = useRef(
-    Worklets.createRunOnJS((dataPayload) => {
+    Worklets.createRunOnJS((dataPayload: number[]) => {
       if (!isReadyRef.current) return;
       runInferenceRef.current?.(dataPayload);
     }),
@@ -63,31 +68,28 @@ export default function TranslatorScreen() {
       const now = Date.now();
       if (now - lastFrameTsRef.current < FRAME_INTERVAL_MS) return;
       lastFrameTsRef.current = now;
-
+      
       const resized = resize(frame, {
-        scale: { width: 160, height: 160 },
+        // ── FIXED: Use 224×224 to match model input shape ──
+        scale: { width: MODEL_WIDTH, height: MODEL_HEIGHT },
         pixelFormat: 'rgb',
         dataType: 'float32',
+        normalize: { mean: [0, 0, 0], std: [255, 255, 255] },
       });
-      
       if (resized != null) {
-        // Convert host view elements into a direct plain numeric array 
-        // to prevent thread-boundary pointer drops
-        const plainArray = new Array(EXPECTED_SIZE);
-        for (let i = 0; i < EXPECTED_SIZE; i++) {
-          const rawPixel = resized[i] || 0.0;
-          
-          // --- CONFIGURATION ZONE ---
-          // If your model still stays completely quiet, swap the active formula below:
-          
-          // Formula A: Normalization [0, 1] 
-          plainArray[i] = rawPixel / 255.0;
-
-          // Formula B: Normalization [-1, 1] (Uncomment below and comment out Formula A if needed)
-          // plainArray[i] = (rawPixel / 127.5) - 1.0;
-        }
-        runOnJS(plainArray);
+  const plainArray = new Array(EXPECTED_SIZE);
+  for (let y = 0; y < MODEL_HEIGHT; y++) {
+    for (let x = 0; x < MODEL_WIDTH; x++) {
+      const srcX = MODEL_WIDTH - 1 - x;
+      for (let c = 0; c < MODEL_CHANNELS; c++) {
+        const dstIdx = (y * MODEL_WIDTH + x) * MODEL_CHANNELS + c;
+        const srcIdx = (y * MODEL_WIDTH + srcX) * MODEL_CHANNELS + c;
+        plainArray[dstIdx] = resized[srcIdx] ?? 0.0;
       }
+    }
+  }
+  runOnJS(plainArray);
+}
     },
     [runOnJS],
   );

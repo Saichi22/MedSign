@@ -8,8 +8,10 @@ export const LABELS = [
   'Nagtatae','Nahihilo','Naiihi','Namamanas','Nanghihina','Nasusuka',
 ];
 
-// Temporarily lowered threshold to catch and show lower-confidence alternative predictions
-export const CONFIDENCE_THRESHOLD = 0.15;
+export const CONFIDENCE_THRESHOLD = 0.30;
+
+// Model expects 224x224x3 = 150,528 float32 values
+const EXPECTED_INPUT_SIZE = 224 * 224 * 3;
 
 export interface Prediction {
   label: string;
@@ -56,10 +58,43 @@ export function useSignDetector() {
       const view = resizedData as ArrayBufferView;
       inputArray = new Float32Array(view.buffer, view.byteOffset, view.byteLength / 4);
     } else {
+      if (__DEV__) console.warn('[SignDetector] Unknown input type:', typeof resizedData);
       return;
     }
 
     if (inputArray.length === 0) return;
+    console.log(
+  'sample pixels:',
+  inputArray[0],
+  inputArray[1],
+  inputArray[2]
+);
+
+    // ── CRITICAL: Validate input size matches model expectation (224×224×3) ──
+    if (inputArray.length !== EXPECTED_INPUT_SIZE) {
+      if (__DEV__) {
+        console.warn(
+          `[SignDetector] Input size mismatch! Got ${inputArray.length} values, ` +
+          `expected ${EXPECTED_INPUT_SIZE} (224×224×3). ` +
+          `Did you resize to 160×160 instead of 224×224?`
+        );
+      }
+      return;
+    }
+
+    // ── Validate normalization: values should be in [0,1], not [0,255] ──
+    if (__DEV__) {
+      let maxPixel = 0;
+      for (let i = 0; i < Math.min(100, inputArray.length); i++) {
+        if (inputArray[i]! > maxPixel) maxPixel = inputArray[i]!;
+      }
+      if (maxPixel > 1.5) {
+        console.warn(
+          `[SignDetector] Pixel values appear un-normalized (max sampled: ${maxPixel.toFixed(2)}). ` +
+          'Divide by 255.0 before passing to runInference.'
+        );
+      }
+    }
 
     try {
       const safeBuffer = inputArray.buffer.slice(
@@ -85,19 +120,19 @@ export function useSignDetector() {
       let maxIdx = 0;
       let maxVal = scores[0]!;
       for (let i = 1; i < scores.length; i++) {
-        if (scores[i]! > maxVal) { 
-          maxVal = scores[i]!; 
-          maxIdx = i; 
+        if (scores[i]! > maxVal) {
+          maxVal = scores[i]!;
+          maxIdx = i;
         }
       }
 
       if (__DEV__) {
         const indexed = Array.from(scores).map((s, i) => ({ s, i }));
         indexed.sort((a, b) => b.s - a.s);
-        const top3 = indexed.slice(0, 3)
+        const top5 = indexed.slice(0, 5)
           .map(({ s, i }) => `${LABELS[i] ?? i}=${(s * 100).toFixed(1)}%`)
           .join(' | ');
-        console.log(`[SignDetector] Vector Elements: ${inputArray.length} | Top 3: ${top3}`);
+        console.log(`[SignDetector] Input OK (${inputArray.length}) | Top 5: ${top5}`);
       }
 
       if (maxVal < CONFIDENCE_THRESHOLD) return;
