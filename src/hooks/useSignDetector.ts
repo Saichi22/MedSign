@@ -10,28 +10,13 @@ export const LABELS = [
 
 export const CONFIDENCE_THRESHOLD = 0.30;
 
+// Model expects 224x224x3 = 150,528 float32 values
 const EXPECTED_INPUT_SIZE = 224 * 224 * 3;
 
 export interface Prediction {
   label: string;
   confidence: number;
   isMedical: boolean;
-}
-
-// ── On-screen debug info (no devtools needed) ──────────────────────────────
-export interface DebugInfo {
-  inputSize: number;
-  minPixel: number;
-  maxPixel: number;
-  sampleR: number;
-  sampleG: number;
-  sampleB: number;
-  frameCount: number;
-  outputClasses: number;
-  top5: Array<{ label: string; pct: number }>;
-  bestLabel: string;
-  bestPct: number;
-  belowThreshold: boolean;
 }
 
 const MEDICAL_LABELS = new Set([
@@ -47,17 +32,17 @@ export function useSignDetector() {
 
   const isReady = plugin.state === 'loaded' && plugin.model != null;
   const [prediction, setPrediction] = useState<Prediction | null>(null);
-  const [debugInfo, setDebugInfo] = useState<DebugInfo | null>(null);
 
-  const frameCountRef = useRef(0);
+  useEffect(() => {
+    if (__DEV__) {
+      console.log(`[SignDetector] model state → ${plugin.state}`);
+    }
+  }, [plugin.state]);
+
   const modelRef = useRef(plugin.model);
   useEffect(() => { modelRef.current = plugin.model; }, [plugin.model]);
 
-  const reset = useCallback(() => {
-    setPrediction(null);
-    setDebugInfo(null);
-    frameCountRef.current = 0;
-  }, []);
+  const reset = useCallback(() => setPrediction(null), []);
 
   const runInference = useCallback((resizedData: unknown) => {
     const model = modelRef.current;
@@ -68,7 +53,7 @@ export function useSignDetector() {
     if (resizedData instanceof Float32Array) {
       inputArray = resizedData;
     } else if (Array.isArray(resizedData)) {
-      inputArray = new Float32Array(resizedData as number[]);
+      inputArray = new Float32Array(resizedData);
     } else if (resizedData && typeof resizedData === 'object' && 'buffer' in resizedData) {
       const view = resizedData as ArrayBufferView;
       inputArray = new Float32Array(view.buffer, view.byteOffset, view.byteLength / 4);
@@ -78,31 +63,38 @@ export function useSignDetector() {
     }
 
     if (inputArray.length === 0) return;
+    console.log(
+  'sample pixels:',
+  inputArray[0],
+  inputArray[1],
+  inputArray[2]
+);
 
+    // ── CRITICAL: Validate input size matches model expectation (224×224×3) ──
     if (inputArray.length !== EXPECTED_INPUT_SIZE) {
       if (__DEV__) {
         console.warn(
-          `[SignDetector] Size mismatch: got ${inputArray.length}, expected ${EXPECTED_INPUT_SIZE}`
+          `[SignDetector] Input size mismatch! Got ${inputArray.length} values, ` +
+          `expected ${EXPECTED_INPUT_SIZE} (224×224×3). ` +
+          `Did you resize to 160×160 instead of 224×224?`
         );
       }
       return;
     }
 
-    frameCountRef.current += 1;
-
-    // ── Collect pixel stats for the on-screen debug panel ──────────────────
-    let minPixel = Infinity;
-    let maxPixel = -Infinity;
-    for (let i = 0; i < Math.min(600, inputArray.length); i++) {
-      const v = inputArray[i]!;
-      if (v < minPixel) minPixel = v;
-      if (v > maxPixel) maxPixel = v;
+    // ── Validate normalization: values should be in [0,1], not [0,255] ──
+    if (__DEV__) {
+      let maxPixel = 0;
+      for (let i = 0; i < Math.min(100, inputArray.length); i++) {
+        if (inputArray[i]! > maxPixel) maxPixel = inputArray[i]!;
+      }
+      if (maxPixel > 1.5) {
+        console.warn(
+          `[SignDetector] Pixel values appear un-normalized (max sampled: ${maxPixel.toFixed(2)}). ` +
+          'Divide by 255.0 before passing to runInference.'
+        );
+      }
     }
-    // Sample from the center of the image
-    const centerIdx = Math.floor(inputArray.length / 2);
-    const sampleR = parseFloat((inputArray[centerIdx] ?? 0).toFixed(3));
-    const sampleG = parseFloat((inputArray[centerIdx + 1] ?? 0).toFixed(3));
-    const sampleB = parseFloat((inputArray[centerIdx + 2] ?? 0).toFixed(3));
 
     try {
       const safeBuffer = inputArray.buffer.slice(
@@ -125,7 +117,6 @@ export function useSignDetector() {
 
       if (scores.length === 0) return;
 
-      // ── Find best class ────────────────────────────────────────────────────
       let maxIdx = 0;
       let maxVal = scores[0]!;
       for (let i = 1; i < scores.length; i++) {
@@ -135,28 +126,14 @@ export function useSignDetector() {
         }
       }
 
-      // ── Build top-5 for debug panel ────────────────────────────────────────
-      const indexed = Array.from(scores).map((s, i) => ({ s, i }));
-      indexed.sort((a, b) => b.s - a.s);
-      const top5 = indexed.slice(0, 5).map(({ s, i }) => ({
-        label: LABELS[i] ?? `Cls${i}`,
-        pct: Math.round(s * 100),
-      }));
-
-      setDebugInfo({
-        inputSize: inputArray.length,
-        minPixel: parseFloat(minPixel.toFixed(3)),
-        maxPixel: parseFloat(maxPixel.toFixed(3)),
-        sampleR,
-        sampleG,
-        sampleB,
-        frameCount: frameCountRef.current,
-        outputClasses: scores.length,
-        top5,
-        bestLabel: LABELS[maxIdx] ?? `Cls${maxIdx}`,
-        bestPct: Math.round(maxVal * 100),
-        belowThreshold: maxVal < CONFIDENCE_THRESHOLD,
-      });
+      if (__DEV__) {
+        const indexed = Array.from(scores).map((s, i) => ({ s, i }));
+        indexed.sort((a, b) => b.s - a.s);
+        const top5 = indexed.slice(0, 5)
+          .map(({ s, i }) => `${LABELS[i] ?? i}=${(s * 100).toFixed(1)}%`)
+          .join(' | ');
+        console.log(`[SignDetector] Input OK (${inputArray.length}) | Top 5: ${top5}`);
+      }
 
       if (maxVal < CONFIDENCE_THRESHOLD) return;
 
@@ -167,16 +144,9 @@ export function useSignDetector() {
         isMedical: MEDICAL_LABELS.has(label),
       });
     } catch (e) {
-      if (__DEV__) console.error('[SignDetector] Inference error:', e);
+      if (__DEV__) console.error('[SignDetector] Runtime execution inference error:', e);
     }
   }, []);
 
-  return {
-    state: plugin.state,
-    isReady,
-    prediction,
-    debugInfo,   // ← NEW: expose to screen
-    reset,
-    runInference,
-  };
+  return { state: plugin.state, isReady, prediction, reset, runInference };
 }

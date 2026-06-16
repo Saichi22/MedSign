@@ -21,9 +21,9 @@ import MaterialCommunityIcons from 'react-native-vector-icons/MaterialCommunityI
 import { COLOR } from '../../../../styles/colors/theme';
 import { styles } from '../../../../styles/colors/TranslatorScreenStyle';
 
-// ── Tune this if detection feels laggy or misses signs ────────────────────
-const FRAME_INTERVAL_MS = 800;
+const FRAME_INTERVAL_MS = 2000;
 
+// ── FIXED: Must match model's input_1 shape: [null, 224, 224, 3] ──
 const MODEL_WIDTH = 224;
 const MODEL_HEIGHT = 224;
 const MODEL_CHANNELS = 3;
@@ -34,33 +34,11 @@ export default function TranslatorScreen() {
   const device = useCameraDevice('front');
   const { resize } = useResizePlugin();
 
-  const {
-    state: modelState,
-    isReady,
-    prediction,
-    debugInfo,    // ← on-screen debug data
-    reset,
-    runInference,
-  } = useSignDetector();
-
+  const { state: modelState, isReady, prediction, reset, runInference } = useSignDetector();
   const modelReady = isReady;
 
   const [isActive, setIsActive] = useState(false);
-  const [history, setHistory] = useState<any[]>([]);
-
-  // ── Debug controls ─────────────────────────────────────────────────────────
-  const [showDebug, setShowDebug] = useState(true);
-
-  // ── FIX 1: Normalization mode ──────────────────────────────────────────────
-  // MobileNetV2 was trained expecting [-1, 1] range.
-  // true  = [-1, 1]  ← START HERE (most likely correct for MobileNetV2)
-  // false = [0, 1]   ← try this if [-1,1] gives all-wrong predictions
-  const [useNeg11Norm, setUseNeg11Norm] = useState(true);
-
-  // ── FIX 2: Horizontal flip ─────────────────────────────────────────────────
-  // Default OFF — training data was almost certainly collected without flipping.
-  // Enable if signs are mirrored / consistently wrong in a left-right way.
-  const [flipEnabled, setFlipEnabled] = useState(false);
+  const [history, setHistory] = useState([]);
 
   useEffect(() => {
     if (!hasPermission) requestPermission();
@@ -72,6 +50,7 @@ export default function TranslatorScreen() {
   const isReadyRef = useRef(isReady);
   useEffect(() => { isReadyRef.current = isReady; }, [isReady]);
 
+  // ── Stable JS bridge — created once, refs keep it current ──
   const runOnJS = useRef(
     Worklets.createRunOnJS((dataPayload: number[]) => {
       if (!isReadyRef.current) return;
@@ -81,9 +60,6 @@ export default function TranslatorScreen() {
 
   const lastFrameTsRef = useRef(0);
 
-  // ── Frame processor ────────────────────────────────────────────────────────
-  // NOTE: useNeg11Norm and flipEnabled are captured in the worklet closure.
-  // The processor is recreated automatically when either value changes.
   const frameProcessor = useFrameProcessor(
     (frame) => {
       'worklet';
@@ -92,46 +68,30 @@ export default function TranslatorScreen() {
       const now = Date.now();
       if (now - lastFrameTsRef.current < FRAME_INTERVAL_MS) return;
       lastFrameTsRef.current = now;
-
-      // ── FIX 1 applied: normalization ───────────────────────────────────────
-      // [-1, 1]: mean=127.5, std=127.5  →  (pixel - 127.5) / 127.5
-      // [ 0, 1]: mean=0,     std=255    →   pixel / 255
+      
       const resized = resize(frame, {
+        // ── FIXED: Use 224×224 to match model input shape ──
         scale: { width: MODEL_WIDTH, height: MODEL_HEIGHT },
         pixelFormat: 'rgb',
         dataType: 'float32',
-        normalize: useNeg11Norm
-          ? { mean: [127.5, 127.5, 127.5], std: [127.5, 127.5, 127.5] }
-          : { mean: [0, 0, 0],             std: [255, 255, 255] },
+        normalize: { mean: [0, 0, 0], std: [255, 255, 255] },
       });
-
-      if (resized == null) return;
-
-      const plainArray = new Array(EXPECTED_SIZE);
-
-      if (flipEnabled) {
-        // ── Horizontal mirror (only enable if signs look flipped) ────────────
-        for (let y = 0; y < MODEL_HEIGHT; y++) {
-          for (let x = 0; x < MODEL_WIDTH; x++) {
-            const srcX = MODEL_WIDTH - 1 - x;
-            for (let c = 0; c < MODEL_CHANNELS; c++) {
-              const dstIdx = (y * MODEL_WIDTH + x) * MODEL_CHANNELS + c;
-              const srcIdx = (y * MODEL_WIDTH + srcX) * MODEL_CHANNELS + c;
-              plainArray[dstIdx] = resized[srcIdx] ?? 0.0;
-            }
-          }
-        }
-      } else {
-        // ── FIX 2 applied: straight copy, no flip ───────────────────────────
-        for (let i = 0; i < EXPECTED_SIZE; i++) {
-          plainArray[i] = resized[i] ?? 0.0;
-        }
+      if (resized != null) {
+  const plainArray = new Array(EXPECTED_SIZE);
+  for (let y = 0; y < MODEL_HEIGHT; y++) {
+    for (let x = 0; x < MODEL_WIDTH; x++) {
+      const srcX = MODEL_WIDTH - 1 - x;
+      for (let c = 0; c < MODEL_CHANNELS; c++) {
+        const dstIdx = (y * MODEL_WIDTH + x) * MODEL_CHANNELS + c;
+        const srcIdx = (y * MODEL_WIDTH + srcX) * MODEL_CHANNELS + c;
+        plainArray[dstIdx] = resized[srcIdx] ?? 0.0;
       }
-
-      runOnJS(plainArray);
+    }
+  }
+  runOnJS(plainArray);
+}
     },
-    // Recreate the processor when norm mode or flip changes
-    [runOnJS, useNeg11Norm, flipEnabled],
+    [runOnJS],
   );
 
   useEffect(() => {
@@ -180,16 +140,6 @@ export default function TranslatorScreen() {
     );
   }
 
-  // ── Pixel range tells us if normalization is correct ──────────────────────
-  // Expected ranges:
-  //   [-1, 1] mode  →  minPixel ≈ -1.0, maxPixel ≈ 1.0
-  //   [0,  1] mode  →  minPixel ≈  0.0, maxPixel ≈ 1.0
-  const normOk = debugInfo
-    ? (useNeg11Norm
-        ? debugInfo.minPixel < -0.3          // confirm negative values present
-        : debugInfo.minPixel >= -0.05)        // confirm no negative values
-    : null;
-
   return (
     <View style={styles.root}>
       <StatusBar barStyle="light-content" backgroundColor={COLOR.tealDeep} />
@@ -225,9 +175,7 @@ export default function TranslatorScreen() {
               color={modelState === 'error' ? COLOR.red : COLOR.amber}
             />
             <Text style={[styles.bannerText, modelState === 'error' && styles.bannerTextError]}>
-              {modelState === 'error'
-                ? 'Model asset missing'
-                : 'Loading detection model…'}
+              {modelState === 'error' ? 'Model configuration runtime asset missing' : 'Loading detection model…'}
             </Text>
           </View>
         )}
@@ -245,6 +193,7 @@ export default function TranslatorScreen() {
               </View>
             </View>
           </View>
+
           <View style={styles.viewfinderWrap}>
             <Camera
               style={StyleSheet.absoluteFill}
@@ -317,150 +266,6 @@ export default function TranslatorScreen() {
           </>
         )}
 
-        {/* ════════════════════════════════════════════════════════════════════
-            ON-SCREEN DEBUG PANEL — remove this entire block before release
-            ════════════════════════════════════════════════════════════════════ */}
-        <TouchableOpacity
-          style={dbg.header}
-          onPress={() => setShowDebug(v => !v)}
-          activeOpacity={0.7}
-        >
-          <Text style={dbg.headerText}>
-            {showDebug ? '▾ Hide debug' : '▸ Show debug'}
-          </Text>
-          {debugInfo && (
-            <Text style={[
-              dbg.badge,
-              { backgroundColor: debugInfo.belowThreshold ? '#854f0b' : '#0f6e56' }
-            ]}>
-              {debugInfo.belowThreshold
-                ? `${debugInfo.bestPct}% (below threshold)`
-                : `${debugInfo.bestPct}% ${debugInfo.bestLabel}`}
-            </Text>
-          )}
-        </TouchableOpacity>
-
-        {showDebug && (
-          <View style={dbg.panel}>
-
-            {/* ── Normalization toggle ── */}
-            <Text style={dbg.section}>NORMALIZATION</Text>
-            <View style={dbg.row}>
-              <TouchableOpacity
-                style={[dbg.btn, useNeg11Norm && dbg.btnActive]}
-                onPress={() => setUseNeg11Norm(true)}
-              >
-                <Text style={[dbg.btnText, useNeg11Norm && dbg.btnTextActive]}>
-                  [-1, 1]{'\n'}MobileNetV2 standard
-                </Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={[dbg.btn, !useNeg11Norm && dbg.btnActive]}
-                onPress={() => setUseNeg11Norm(false)}
-              >
-                <Text style={[dbg.btnText, !useNeg11Norm && dbg.btnTextActive]}>
-                  [0, 1]{'\n'}Divide by 255
-                </Text>
-              </TouchableOpacity>
-            </View>
-
-            {/* ── Flip toggle ── */}
-            <Text style={dbg.section}>HORIZONTAL FLIP</Text>
-            <View style={dbg.row}>
-              <TouchableOpacity
-                style={[dbg.btn, !flipEnabled && dbg.btnActive]}
-                onPress={() => setFlipEnabled(false)}
-              >
-                <Text style={[dbg.btnText, !flipEnabled && dbg.btnTextActive]}>
-                  OFF{'\n'}(default)
-                </Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={[dbg.btn, flipEnabled && dbg.btnActive]}
-                onPress={() => setFlipEnabled(true)}
-              >
-                <Text style={[dbg.btnText, flipEnabled && dbg.btnTextActive]}>
-                  ON{'\n'}(mirrored)
-                </Text>
-              </TouchableOpacity>
-            </View>
-
-            {debugInfo ? (
-              <>
-                {/* ── Pixel range — tells you if normalization is working ── */}
-                <Text style={dbg.section}>PIXEL RANGE (first 600 values)</Text>
-                <View style={dbg.infoRow}>
-                  <Text style={dbg.key}>min / max</Text>
-                  <Text style={[
-                    dbg.val,
-                    normOk === true  && { color: '#5dcaa5' },
-                    normOk === false && { color: '#f0997b' },
-                  ]}>
-                    {debugInfo.minPixel} / {debugInfo.maxPixel}
-                    {normOk === true  ? '  ✓' : ''}
-                    {normOk === false ? '  ✗ wrong norm?' : ''}
-                  </Text>
-                </View>
-                <Text style={dbg.hint}>
-                  {useNeg11Norm
-                    ? 'Expect: min ≈ −1.0, max ≈ 1.0'
-                    : 'Expect: min ≈ 0.0,  max ≈ 1.0'}
-                </Text>
-
-                {/* ── Center pixel sample ── */}
-                <View style={dbg.infoRow}>
-                  <Text style={dbg.key}>center R/G/B</Text>
-                  <Text style={dbg.val}>
-                    {debugInfo.sampleR} / {debugInfo.sampleG} / {debugInfo.sampleB}
-                  </Text>
-                </View>
-
-                {/* ── Model health ── */}
-                <Text style={dbg.section}>MODEL</Text>
-                <View style={dbg.infoRow}>
-                  <Text style={dbg.key}>output classes</Text>
-                  <Text style={[dbg.val, debugInfo.outputClasses === 36 ? { color: '#5dcaa5' } : { color: '#f0997b' }]}>
-                    {debugInfo.outputClasses} {debugInfo.outputClasses === 36 ? '✓' : '✗ expected 36'}
-                  </Text>
-                </View>
-                <View style={dbg.infoRow}>
-                  <Text style={dbg.key}>frames processed</Text>
-                  <Text style={dbg.val}>{debugInfo.frameCount}</Text>
-                </View>
-
-                {/* ── Top 5 predictions ── */}
-                <Text style={dbg.section}>TOP 5 PREDICTIONS</Text>
-                {debugInfo.top5.map((t, i) => (
-                  <View key={i} style={dbg.barRow}>
-                    <Text style={[dbg.barLabel, i === 0 && { color: '#5dcaa5', fontWeight: '600' }]}>
-                      {t.label}
-                    </Text>
-                    <View style={dbg.barTrack}>
-                      <View style={[
-                        dbg.barFill,
-                        { width: `${t.pct}%` },
-                        i === 0 && { backgroundColor: '#1d9e75' },
-                      ]} />
-                    </View>
-                    <Text style={[dbg.barPct, i === 0 && { color: '#5dcaa5' }]}>
-                      {t.pct}%
-                    </Text>
-                  </View>
-                ))}
-
-                <Text style={dbg.hint}>
-                  Threshold: {Math.round(0.30 * 100)}% — best is {debugInfo.belowThreshold ? 'BELOW' : 'ABOVE'} it
-                </Text>
-              </>
-            ) : (
-              <Text style={dbg.hint}>
-                {isActive ? 'Waiting for first frame…' : 'Start a session to see debug data'}
-              </Text>
-            )}
-          </View>
-        )}
-        {/* ════════════════════════════════════════════════════════════════════ */}
-
         {/* ── CTA ── */}
         <TouchableOpacity
           style={[styles.primaryBtn, isActive && styles.stopBtn]}
@@ -481,126 +286,3 @@ export default function TranslatorScreen() {
     </View>
   );
 }
-
-// ── Debug panel styles (self-contained, won't clash with your theme) ────────
-const dbg = StyleSheet.create({
-  header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: 16,
-    paddingVertical: 8,
-    marginTop: 4,
-    backgroundColor: '#1a1a2e',
-    borderRadius: 8,
-    marginHorizontal: 2,
-  },
-  headerText: {
-    color: '#5dcaa5',
-    fontSize: 12,
-    fontFamily: 'monospace',
-  },
-  badge: {
-    fontSize: 11,
-    color: '#fff',
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: 4,
-    overflow: 'hidden',
-  },
-  panel: {
-    backgroundColor: '#0d0d1a',
-    borderRadius: 8,
-    padding: 12,
-    marginHorizontal: 2,
-    marginBottom: 8,
-  },
-  section: {
-    color: '#5dcaa5',
-    fontSize: 10,
-    fontFamily: 'monospace',
-    letterSpacing: 1,
-    marginTop: 10,
-    marginBottom: 6,
-  },
-  row: {
-    flexDirection: 'row',
-    gap: 8,
-  },
-  btn: {
-    flex: 1,
-    borderWidth: 1,
-    borderColor: '#2a2a4a',
-    borderRadius: 6,
-    padding: 8,
-    alignItems: 'center',
-  },
-  btnActive: {
-    borderColor: '#1d9e75',
-    backgroundColor: '#0a2a1e',
-  },
-  btnText: {
-    color: '#5a5a8a',
-    fontSize: 12,
-    textAlign: 'center',
-    lineHeight: 18,
-  },
-  btnTextActive: {
-    color: '#5dcaa5',
-    fontWeight: '600',
-  },
-  infoRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    paddingVertical: 3,
-  },
-  key: {
-    color: '#5a5a8a',
-    fontSize: 12,
-    fontFamily: 'monospace',
-  },
-  val: {
-    color: '#ccc',
-    fontSize: 12,
-    fontFamily: 'monospace',
-  },
-  hint: {
-    color: '#3a3a6a',
-    fontSize: 11,
-    fontFamily: 'monospace',
-    marginTop: 4,
-    fontStyle: 'italic',
-  },
-  barRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: 5,
-    gap: 6,
-  },
-  barLabel: {
-    width: 88,
-    color: '#8a8aaa',
-    fontSize: 12,
-    fontFamily: 'monospace',
-    textAlign: 'right',
-  },
-  barTrack: {
-    flex: 1,
-    height: 14,
-    backgroundColor: '#1a1a3a',
-    borderRadius: 3,
-    overflow: 'hidden',
-  },
-  barFill: {
-    height: 14,
-    backgroundColor: '#2a5a8a',
-    borderRadius: 3,
-  },
-  barPct: {
-    width: 36,
-    color: '#8a8aaa',
-    fontSize: 11,
-    fontFamily: 'monospace',
-    textAlign: 'right',
-  },
-});
