@@ -153,20 +153,12 @@ export default function HomeScreen() {
         <View style={styles.headerBlob} />
         <View style={styles.headerTop}>
           <View>
-            <Text style={styles.headerGreeting}>Good morning,</Text>
+            <Text style={styles.headerGreeting}>Good Morning,</Text>
             <Text style={styles.headerName}>{firstName}</Text>
           </View>
           <TouchableOpacity style={styles.headerAvatar}>
             <MaterialCommunityIcons name="account-outline" size={22} color={COLOR.white} />
           </TouchableOpacity>
-        </View>
-
-        <View style={styles.statsRow}>
-          <StatBadge icon="camera"         value="128"  label="Sessions" />
-          <View style={styles.statDivider} />
-          <StatBadge icon="clock-outline"     value="2.1s" label="Avg. Speed" />
-          <View style={styles.statDivider} />
-          <StatBadge icon="check-circle-outline" value="98%" label="Accuracy" />
         </View>
       </Animated.View>
 
@@ -264,10 +256,7 @@ export default function HomeScreen() {
         <Text style={styles.sectionLabel}>QUICK ACTIONS</Text>
         <View style={styles.quickGrid}>
           {[
-            { icon: 'history',              label: 'Session History' },
             { icon: 'bookmark-outline',     label: 'Saved Signs' },
-            { icon: 'account-group-outline',label: 'Patients' },
-            { icon: 'chart-line',           label: 'Analytics' },
           ].map((item, i) => (
             <TouchableOpacity key={i} style={styles.quickCard} activeOpacity={0.75}>
               <View style={styles.quickIconWrap}>
@@ -278,7 +267,7 @@ export default function HomeScreen() {
           ))}
         </View>
 
-        {/* ── Recent Translations ──────────────────────────────────────── */}
+        {/* ── Recent Translations ────────────────────────────────────────
         <Text style={styles.sectionLabel}>RECENT TRANSLATIONS</Text>
         <View style={styles.card}>
           <RecentRow sign="Hello" translation="Greeting gesture detected"   time="2m ago" />
@@ -288,7 +277,7 @@ export default function HomeScreen() {
             <Text style={styles.viewAllText}>View all sessions</Text>
             <MaterialCommunityIcons name="arrow-right" size={15} color={COLOR.tealBright} />
           </TouchableOpacity>
-        </View>
+        </View> */}
       </ScrollView>
     </View>
   );

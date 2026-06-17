@@ -307,6 +307,7 @@ export const indexStyles = StyleSheet.create({
     fontSize: 11,
     color: 'rgba(255,255,255,0.32)',
     marginTop: 4,
+    marginBottom: 30,
   },
   disclaimerLink: {
     color: 'rgba(126,221,227,0.65)',

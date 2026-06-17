@@ -162,15 +162,6 @@ export default function IndexScreen({ navigation }) {
           </Text>
         </View>
 
-        {/* Accessibility badge */}
-        <View style={styles.accessBadge}>
-          <MaterialCommunityIcons
-            name="hand-wave-outline"
-            size={11}
-            color="rgba(255,255,255,0.80)"
-          />
-          <Text style={styles.accessBadgeText}>ASL · Accessible</Text>
-        </View>
       </View>
 
       {/* ── Hero copy ─────────────────────────────────────────────────────── */}
@@ -183,11 +174,7 @@ export default function IndexScreen({ navigation }) {
           },
         ]}
       >
-        {/* Eyebrow tag */}
-        <View style={styles.eyebrowTag}>
-          <View style={styles.eyebrowDot} />
-          <Text style={styles.eyebrowText}>Healthcare · ASL · AI</Text>
-        </View>
+      
 
         <Text style={styles.headline}>
           Your sign,{'\n'}
@@ -195,36 +182,12 @@ export default function IndexScreen({ navigation }) {
         </Text>
 
         <Text style={styles.subheadline}>
-          MedSign bridges the gap between patients and providers — with
-          real-time ASL interpretation and AI-powered care navigation.
+          MedSign bridges the gap for Non-verbal community — with
+          real-time ASL interpretation.
         </Text>
-
-        {/* Feature pills */}
-        <View style={styles.pillRow}>
-          <FeaturePill icon="sign-language" label="ASL Interpreter" delay={0} />
-          <FeaturePill icon="robot-outline" label="AI Triage" delay={80} />
-          <FeaturePill
-            icon="shield-check-outline"
-            label="HIPAA Safe"
-            delay={160}
-          />
-        </View>
       </Animated.View>
 
-      {/* ── Stat cards row ────────────────────────────────────────────────── */}
-      <Animated.View
-        style={[
-          styles.statsRow,
-          {
-            opacity: heroFade,
-          },
-        ]}
-      >
-        <StatCard value="98%" label="Accuracy" delay={500} />
-        <StatCard value="< 2s" label="Response" delay={620} />
-        <StatCard value="50k+" label="Patients" delay={740} />
-      </Animated.View>
-
+    
       {/* ── CTA buttons ───────────────────────────────────────────────────── */}
       <Animated.View
         style={[
