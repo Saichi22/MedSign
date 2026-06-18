@@ -9,13 +9,13 @@ import {
   Animated,
   StyleSheet,
 } from 'react-native';
-import { useNavigation } from '@react-navigation/native';
 import MaterialCommunityIcons from 'react-native-vector-icons/MaterialCommunityIcons';
 import { useAuth } from '../../../auth/services/AuthContext';
 
 import {
   Camera,
   useCameraDevice,
+  useCameraPermission,
   useFrameProcessor,
 } from 'react-native-vision-camera';
 import { Worklets } from 'react-native-worklets-core';
@@ -25,91 +25,106 @@ import { useSignDetector } from '../../../../hooks/useSignDetector';
 import { COLOR } from '../../../../styles/colors/theme';
 import { styles } from '../../../../styles/colors/HomeScreenStyle';
 
-// ─── Quick Stat Badge ─────────────────────────────────────────────────────────
-function StatBadge({ icon, value, label }) {
-  return (
-    <View style={styles.statBadge}>
-      <MaterialCommunityIcons name={icon} size={18} color={COLOR.tealBright} />
-      <Text style={styles.statValue}>{value}</Text>
-      <Text style={styles.statLabel}>{label}</Text>
-    </View>
-  );
-}
-
-// ─── Recent Translation Row ───────────────────────────────────────────────────
-function RecentRow({ sign, translation, time }) {
-  return (
-    <View style={styles.recentRow}>
-      <View style={styles.recentIconWrap}>
-        <MaterialCommunityIcons name="sign-language" size={16} color={COLOR.tealBright} />
-      </View>
-      <View style={{ flex: 1, marginLeft: 12 }}>
-        <Text style={styles.recentSign}>{sign}</Text>
-        <Text style={styles.recentTranslation}>{translation}</Text>
-      </View>
-      <Text style={styles.recentTime}>{time}</Text>
-    </View>
-  );
-}
+// ─── Frame / model constants (must match model input shape) ───────────────────
+const FRAME_INTERVAL_MS = 2000;
+const MODEL_WIDTH    = 224;
+const MODEL_HEIGHT   = 224;
+const MODEL_CHANNELS = 3;
+const EXPECTED_SIZE  = MODEL_WIDTH * MODEL_HEIGHT * MODEL_CHANNELS; // 150,528
 
 // ─── Main HomeScreen ──────────────────────────────────────────────────────────
 export default function HomeScreen() {
   const { user } = useAuth();
-  const [isRecording, setIsRecording] = useState(false);
-  const [transcript, setTranscript] = useState([]);
-  const navigation = useNavigation();
-
+  const { hasPermission, requestPermission } = useCameraPermission();
   const device = useCameraDevice('front');
-
-  // ── Correctly destructure all values the hook actually returns ────────────
-  const { isReady, prediction, runInference } = useSignDetector();
   const { resize } = useResizePlugin();
 
-  // ── Stable JS-thread bridge — memoized so frameProcessor deps stay stable ─
-  const runOnJS = useCallback(
-    Worklets.createRunOnJS((buffer) => {
-      if (runInference) runInference(buffer);
+  const { state: modelState, isReady, prediction, reset, runInference } = useSignDetector();
+
+  const [isRecording, setIsRecording] = useState(false);
+  const [history, setHistory]         = useState([]);
+
+  // Request camera permission on mount if needed
+  useEffect(() => {
+    if (!hasPermission) requestPermission();
+  }, [hasPermission, requestPermission]);
+
+  // ── Keep worklet-safe refs current ───────────────────────────────────────
+  const runInferenceRef = useRef(runInference);
+  useEffect(() => { runInferenceRef.current = runInference; }, [runInference]);
+
+  const isReadyRef = useRef(isReady);
+  useEffect(() => { isReadyRef.current = isReady; }, [isReady]);
+
+  // ── Stable JS bridge — created once, refs keep it current ────────────────
+  const runOnJS = useRef(
+    Worklets.createRunOnJS((dataPayload) => {
+      if (!isReadyRef.current) return;
+      runInferenceRef.current?.(dataPayload);
     }),
-    [runInference],
+  ).current;
+
+  const lastFrameTsRef = useRef(0);
+
+  // ── Frame processor (mirrors + throttles, matches TranslatorScreen) ───────
+  const frameProcessor = useFrameProcessor(
+    (frame) => {
+      'worklet';
+      const now = Date.now();
+      if (now - lastFrameTsRef.current < FRAME_INTERVAL_MS) return;
+      lastFrameTsRef.current = now;
+
+      const resized = resize(frame, {
+        scale:       { width: MODEL_WIDTH, height: MODEL_HEIGHT },
+        pixelFormat: 'rgb',
+        dataType:    'float32',
+        normalize:   { mean: [0, 0, 0], std: [255, 255, 255] },
+      });
+
+      if (resized != null) {
+        // Horizontal flip to match front-camera mirroring expected by the model
+        const plainArray = new Array(EXPECTED_SIZE);
+        for (let y = 0; y < MODEL_HEIGHT; y++) {
+          for (let x = 0; x < MODEL_WIDTH; x++) {
+            const srcX = MODEL_WIDTH - 1 - x;
+            for (let c = 0; c < MODEL_CHANNELS; c++) {
+              const dstIdx = (y * MODEL_WIDTH + x)   * MODEL_CHANNELS + c;
+              const srcIdx = (y * MODEL_WIDTH + srcX) * MODEL_CHANNELS + c;
+              plainArray[dstIdx] = resized[srcIdx] ?? 0.0;
+            }
+          }
+        }
+        runOnJS(plainArray);
+      }
+    },
+    [runOnJS],
   );
 
-  // ── Append unique consecutive predictions to transcript ───────────────────
-  const handlePrediction = useCallback((label) => {
-    setTranscript(prev => {
-      if (prev[prev.length - 1] === label) return prev;
-      return [...prev, label];
-    });
-  }, []);
-
-  // ── React to new predictions while recording ──────────────────────────────
+  // ── Append new predictions to history while recording ────────────────────
   useEffect(() => {
-    if (prediction && isRecording) {
-      handlePrediction(prediction.label);
-    }
-  }, [prediction, isRecording, handlePrediction]);
+    if (!prediction || !isRecording) return;
+    setHistory(prev =>
+      [{ ...prediction, ts: new Date().toLocaleTimeString() }, ...prev].slice(0, 5),
+    );
+  }, [prediction, isRecording]);
 
-  // ── Frame processor ───────────────────────────────────────────────────────
-  const frameProcessor = useFrameProcessor((frame) => {
-    'worklet';
-    if (!isReady || !isRecording) return;
-
-    const resized = resize(frame, {
-      scale: { width: 224, height: 224 },
-      pixelFormat: 'rgb',
-      dataType: 'float32',
-      normalize: { mean: [0, 0, 0], std: [255, 255, 255] },
+  // ── Toggle recording ──────────────────────────────────────────────────────
+  const handleToggle = useCallback(() => {
+    setIsRecording(prev => {
+      if (prev) {
+        reset();
+        setHistory([]);
+      }
+      return !prev;
     });
-
-    // Hand off to JS thread — inference must NOT run inside the worklet
-    runOnJS(resized);
-  }, [isReady, isRecording, runOnJS]);
+  }, [reset]);
 
   // ── Entrance animations ───────────────────────────────────────────────────
-  const headerFade  = useRef(new Animated.Value(0)).current;
-  const headerSlide = useRef(new Animated.Value(-20)).current;
-  const cardFade    = useRef(new Animated.Value(0)).current;
-  const cardScale   = useRef(new Animated.Value(0.96)).current;
-  const pulseAnim   = useRef(new Animated.Value(1)).current;
+  const headerFade   = useRef(new Animated.Value(0)).current;
+  const headerSlide  = useRef(new Animated.Value(-20)).current;
+  const cardFade     = useRef(new Animated.Value(0)).current;
+  const cardScale    = useRef(new Animated.Value(0.96)).current;
+  const pulseAnim    = useRef(new Animated.Value(1)).current;
   const pulseOpacity = useRef(new Animated.Value(0)).current;
 
   useEffect(() => {
@@ -144,12 +159,35 @@ export default function HomeScreen() {
 
   const firstName = user?.displayName?.split(' ')[0] || 'Doctor';
 
+  // ── No camera permission ──────────────────────────────────────────────────
+  if (!hasPermission) {
+    return (
+      <View style={styles.centeredFill}>
+        <View style={styles.emptyIconWrap}>
+          <MaterialCommunityIcons name="camera-off" size={28} color={COLOR.tealBright} />
+        </View>
+        <Text style={styles.emptyTitle}>Camera Access Needed</Text>
+        <Text style={styles.emptyBody}>
+          Sign detection requires access to your camera to read hand gestures in real time.
+        </Text>
+        <TouchableOpacity style={styles.primaryBtn} onPress={requestPermission}>
+          <Text style={styles.primaryBtnText}>Grant Permission</Text>
+        </TouchableOpacity>
+      </View>
+    );
+  }
+
   return (
     <View style={styles.root}>
       <StatusBar barStyle="light-content" backgroundColor={COLOR.tealDeep} />
 
       {/* ── Header ──────────────────────────────────────────────────────── */}
-      <Animated.View style={[styles.header, { opacity: headerFade, transform: [{ translateY: headerSlide }] }]}>
+      <Animated.View
+        style={[
+          styles.header,
+          { opacity: headerFade, transform: [{ translateY: headerSlide }] },
+        ]}
+      >
         <View style={styles.headerBlob} />
         <View style={styles.headerTop}>
           <View>
@@ -162,9 +200,34 @@ export default function HomeScreen() {
         </View>
       </Animated.View>
 
-      <ScrollView style={{ flex: 1 }} contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
+      <ScrollView
+        style={{ flex: 1 }}
+        contentContainerStyle={styles.scrollContent}
+        showsVerticalScrollIndicator={false}
+      >
+        {/* ── Model loading / error banner ─────────────────────────────── */}
+        {!isReady && (
+          <View style={[styles.bannerCard, modelState === 'error' && styles.bannerCardError]}>
+            <MaterialCommunityIcons
+              name={modelState === 'error' ? 'alert-circle-outline' : 'clock-outline'}
+              size={16}
+              color={modelState === 'error' ? COLOR.red : COLOR.amber}
+            />
+            <Text style={[styles.bannerText, modelState === 'error' && styles.bannerTextError]}>
+              {modelState === 'error'
+                ? 'Model configuration runtime asset missing'
+                : 'Loading detection model…'}
+            </Text>
+          </View>
+        )}
+
         {/* ── ASL Translator Card ──────────────────────────────────────── */}
-        <Animated.View style={[styles.translatorCard, { opacity: cardFade, transform: [{ scale: cardScale }] }]}>
+        <Animated.View
+          style={[
+            styles.translatorCard,
+            { opacity: cardFade, transform: [{ scale: cardScale }] },
+          ]}
+        >
           <View style={styles.cardHeader}>
             <View style={styles.cardTitleRow}>
               <View style={styles.cardIconWrap}>
@@ -183,27 +246,26 @@ export default function HomeScreen() {
             </View>
           </View>
 
-          {/* Camera viewfinder */}
+          {/* ── Camera viewfinder ──────────────────────────────────────── */}
           <View style={styles.viewfinderWrap}>
             <View style={[styles.viewfinder, { overflow: 'hidden' }]}>
-              {isRecording && device ? (
+              {device && isRecording ? (
                 <Camera
                   style={StyleSheet.absoluteFill}
                   device={device}
-                  isActive={isRecording}
+                  isActive={true}
                   frameProcessor={frameProcessor}
-                  frameProcessorFps={5}
-                  pixelFormat="yuv"
+                  pixelFormat="rgb"
                 />
               ) : (
                 <View style={styles.viewfinderCenter}>
                   <MaterialCommunityIcons
-                    name="hand-wave-outline"
+                    name={device ? 'hand-wave-outline' : 'camera-off'}
                     size={48}
-                    color={isRecording ? COLOR.tealLight : 'rgba(126,221,227,0.35)'}
+                    color="rgba(126,221,227,0.35)"
                   />
                   <Text style={styles.viewfinderHint}>
-                    {!device ? 'Camera hardware unavailable' : 'Camera feed will appear here'}
+                    {device ? 'Camera feed will appear here' : 'Camera hardware unavailable'}
                   </Text>
                 </View>
               )}
@@ -214,40 +276,47 @@ export default function HomeScreen() {
               <View style={[styles.corner, styles.cornerBL]} pointerEvents="none" />
               <View style={[styles.corner, styles.cornerBR]} pointerEvents="none" />
 
-              {isRecording && (
-                <Animated.View
-                  style={[styles.pulseRing, { opacity: pulseOpacity, transform: [{ scale: pulseAnim }] }]}
-                  pointerEvents="none"
-                />
-              )}
             </View>
           </View>
 
-          {/* Translation output */}
-          <View style={styles.outputBox}>
-            <Text style={styles.outputLabel}>
-              {isRecording && prediction ? `CURRENT SIGN: ${prediction.label}` : 'TRANSLATION OUTPUT'}
-            </Text>
-            <Text style={[styles.outputText, !isRecording && styles.outputTextMuted]}>
-              {isRecording
-                ? (transcript.length > 0 ? transcript.join(' ') : 'Listening for signs…')
-                : 'Start a session to see translations'}
-            </Text>
-          </View>
+          {/* ── Current prediction ─────────────────────────────────────── */}
+          {prediction ? (
+            <View style={[styles.outputBox, prediction.isMedical && styles.cardMedical]}>
+              <Text style={styles.outputLabel}>CURRENT SIGN</Text>
+              <Text style={styles.predictionLabel}>{prediction.label}</Text>
+              <View style={styles.predictionMeta}>
+                <Text style={styles.predictionConf}>{prediction.confidence}% confidence</Text>
+                {prediction.isMedical && (
+                  <View style={styles.medicalTag}>
+                    <MaterialCommunityIcons name="medical-bag" size={12} color={COLOR.amber} />
+                    <Text style={styles.medicalTagText}>Medical Sign</Text>
+                  </View>
+                )}
+              </View>
+            </View>
+          ) : (
+            <View style={styles.outputBox}>
+              <Text style={styles.outputLabel}>TRANSLATION OUTPUT</Text>
+              <Text style={[styles.outputText, styles.outputTextMuted]}>
+                {isRecording ? 'Listening for signs…' : 'Start a session to see translations'}
+              </Text>
+            </View>
+          )}
 
-          {/* CTA — navigates to full TranslatorScreen */}
+          {/* ── CTA ────────────────────────────────────────────────────── */}
           <TouchableOpacity
             style={[styles.startBtn, isRecording && styles.stopBtn]}
-            onPress={() => navigation.navigate('Translator')}
+            onPress={handleToggle}
+            disabled={!isReady}
             activeOpacity={0.85}
           >
             <MaterialCommunityIcons
               name={isRecording ? 'stop-circle-outline' : 'camera-outline'}
               size={20}
-              color={isRecording ? '#EF4444' : COLOR.tealDeep}
+              color={isRecording ? COLOR.red : COLOR.tealDeep}
             />
             <Text style={[styles.startBtnText, isRecording && styles.stopBtnText]}>
-              {isRecording ? 'Stop Session' : 'Start Translation'}
+              {isRecording ? 'Stop Session' : isReady ? 'Start Translation' : 'Loading model…'}
             </Text>
           </TouchableOpacity>
         </Animated.View>
@@ -255,9 +324,7 @@ export default function HomeScreen() {
         {/* ── Quick Actions ────────────────────────────────────────────── */}
         <Text style={styles.sectionLabel}>QUICK ACTIONS</Text>
         <View style={styles.quickGrid}>
-          {[
-            { icon: 'bookmark-outline',     label: 'Saved Signs' },
-          ].map((item, i) => (
+          {[{ icon: 'bookmark-outline', label: 'Saved Signs' }].map((item, i) => (
             <TouchableOpacity key={i} style={styles.quickCard} activeOpacity={0.75}>
               <View style={styles.quickIconWrap}>
                 <MaterialCommunityIcons name={item.icon} size={22} color={COLOR.tealBright} />
@@ -266,18 +333,6 @@ export default function HomeScreen() {
             </TouchableOpacity>
           ))}
         </View>
-
-        {/* ── Recent Translations ────────────────────────────────────────
-        <Text style={styles.sectionLabel}>RECENT TRANSLATIONS</Text>
-        <View style={styles.card}>
-          <RecentRow sign="Hello" translation="Greeting gesture detected"   time="2m ago" />
-          <RecentRow sign="Pain"  translation="Medical distress indicator"  time="14m ago" />
-          <RecentRow sign="Help"  translation="Urgent assistance request"   time="1h ago" />
-          <TouchableOpacity style={styles.viewAllRow}>
-            <Text style={styles.viewAllText}>View all sessions</Text>
-            <MaterialCommunityIcons name="arrow-right" size={15} color={COLOR.tealBright} />
-          </TouchableOpacity>
-        </View> */}
       </ScrollView>
     </View>
   );

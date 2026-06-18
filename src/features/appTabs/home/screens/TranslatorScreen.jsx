@@ -63,7 +63,7 @@ export default function TranslatorScreen() {
   const frameProcessor = useFrameProcessor(
     (frame) => {
       'worklet';
-      if (!isReadyRef.current) return;
+      //if (!isReadyRef.current) return; -- makes app unresponsive until model loads, so moved check to inside runOnJS callback
 
       const now = Date.now();
       if (now - lastFrameTsRef.current < FRAME_INTERVAL_MS) return;
