@@ -23,11 +23,11 @@ import { styles } from '../../../../styles/colors/TranslatorScreenStyle';
 
 const FRAME_INTERVAL_MS = 2000;
 
-// ── FIXED: Must match model's input_1 shape: [null, 224, 224, 3] ──
-const MODEL_WIDTH = 224;
-const MODEL_HEIGHT = 224;
+// ── Updated for besta_float16.tflite: YOLOv8 input shape [1, 3, 640, 640] ──
+const MODEL_WIDTH = 640;
+const MODEL_HEIGHT = 640;
 const MODEL_CHANNELS = 3;
-const EXPECTED_SIZE = MODEL_WIDTH * MODEL_HEIGHT * MODEL_CHANNELS; // 150,528
+const EXPECTED_SIZE = MODEL_WIDTH * MODEL_HEIGHT * MODEL_CHANNELS; // 1,228,800
 
 export default function TranslatorScreen() {
   const { hasPermission, requestPermission } = useCameraPermission();
@@ -68,28 +68,30 @@ export default function TranslatorScreen() {
       const now = Date.now();
       if (now - lastFrameTsRef.current < FRAME_INTERVAL_MS) return;
       lastFrameTsRef.current = now;
-      
+
       const resized = resize(frame, {
-        // ── FIXED: Use 224×224 to match model input shape ──
+        // ── Updated: 640×640 to match YOLOv8 input ──
         scale: { width: MODEL_WIDTH, height: MODEL_HEIGHT },
         pixelFormat: 'rgb',
         dataType: 'float32',
         normalize: { mean: [0, 0, 0], std: [255, 255, 255] },
       });
+
       if (resized != null) {
-  const plainArray = new Array(EXPECTED_SIZE);
-  for (let y = 0; y < MODEL_HEIGHT; y++) {
-    for (let x = 0; x < MODEL_WIDTH; x++) {
-      const srcX = MODEL_WIDTH - 1 - x;
-      for (let c = 0; c < MODEL_CHANNELS; c++) {
-        const dstIdx = (y * MODEL_WIDTH + x) * MODEL_CHANNELS + c;
-        const srcIdx = (y * MODEL_WIDTH + srcX) * MODEL_CHANNELS + c;
-        plainArray[dstIdx] = resized[srcIdx] ?? 0.0;
+        // Mirror horizontally (front camera flip correction)
+        const plainArray = new Array(EXPECTED_SIZE);
+        for (let y = 0; y < MODEL_HEIGHT; y++) {
+          for (let x = 0; x < MODEL_WIDTH; x++) {
+            const srcX = MODEL_WIDTH - 1 - x;
+            for (let c = 0; c < MODEL_CHANNELS; c++) {
+              const dstIdx = (y * MODEL_WIDTH + x) * MODEL_CHANNELS + c;
+              const srcIdx = (y * MODEL_WIDTH + srcX) * MODEL_CHANNELS + c;
+              plainArray[dstIdx] = resized[srcIdx] ?? 0.0;
+            }
+          }
+        }
+        runOnJS(plainArray);
       }
-    }
-  }
-  runOnJS(plainArray);
-}
     },
     [runOnJS],
   );
@@ -175,7 +177,9 @@ export default function TranslatorScreen() {
               color={modelState === 'error' ? COLOR.red : COLOR.amber}
             />
             <Text style={[styles.bannerText, modelState === 'error' && styles.bannerTextError]}>
-              {modelState === 'error' ? 'Model configuration runtime asset missing' : 'Loading detection model…'}
+              {modelState === 'error'
+                ? 'Model configuration runtime asset missing'
+                : 'Loading detection model…'}
             </Text>
           </View>
         )}

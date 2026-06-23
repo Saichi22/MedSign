@@ -1,17 +1,67 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useTensorflowModel } from 'react-native-fast-tflite';
 
+// ── Labels in EXACT order from data.yaml (index = class id the model outputs) ──
 export const LABELS = [
-  'A','B','C','D','E','F','G','H','I','J','K','L','M',
-  'N','O','P','Q','R','S','T','U','V','W','X','Y','Z',
-  'Tumutusok','Lalamunan','Mahirap','Masakit',
-  'Nagtatae','Nahihilo','Naiihi','Namamanas','Nanghihina','Nasusuka',
+  'A',          // 0
+  'B',          // 1
+  'C',          // 2
+  'D',          // 3
+  'E',          // 4
+  'Eight',      // 5
+  'F',          // 6
+  'Family',     // 7
+  'Fine',       // 8
+  'Five',       // 9
+  'Four',       // 10
+  'G',          // 11
+  'H',          // 12
+  'Help',       // 13
+  'Home',       // 14
+  'Hungry',     // 15
+  'I',          // 16
+  'I_hate_you', // 17
+  'I_love_you', // 18
+  'K',          // 19
+  'L',          // 20
+  'M',          // 21
+  'N',          // 22
+  'Nine',       // 23
+  'No',         // 24
+  'O',          // 25
+  'Okay',       // 26
+  'One',        // 27
+  'P',          // 28
+  'Pray',       // 29
+  'Q',          // 30
+  'R',          // 31
+  'S',          // 32
+  'Seven',      // 33
+  'Six',        // 34
+  'Sorry',      // 35
+  'T',          // 36
+  'Three',      // 37
+  'Time',       // 38
+  'Two',        // 39
+  'U',          // 40
+  'V',          // 41
+  'W',          // 42
+  'X',          // 43
+  'Y',          // 44
+  'Zero',       // 45
+  'J',          // 46
+  'Z',          // 47
 ];
 
-export const CONFIDENCE_THRESHOLD = 0.30;
+export const CONFIDENCE_THRESHOLD = 0.20;
 
-// Model expects 224x224x3 = 150,528 float32 values
-const EXPECTED_INPUT_SIZE = 224 * 224 * 3;
+// ── besta_float16.tflite: YOLOv8 expects 640×640×3 ──
+const MODEL_SIZE = 640;
+const EXPECTED_INPUT_SIZE = MODEL_SIZE * MODEL_SIZE * 3; // 1,228,800
+
+// YOLOv8 output: [1, 52, 8400] → 52 = 4 bbox coords + 48 class scores
+const NUM_CLASSES = LABELS.length;  // 48
+const NUM_ANCHORS = 8400;
 
 export interface Prediction {
   label: string;
@@ -19,14 +69,18 @@ export interface Prediction {
   isMedical: boolean;
 }
 
-const MEDICAL_LABELS = new Set([
-  'Tumutusok','Lalamunan','Mahirap','Masakit',
-  'Nagtatae','Nahihilo','Naiihi','Namamanas','Nanghihina','Nasusuka',
+// Phrase/word signs (shown with medical-bag icon in UI)
+const PHRASE_LABELS = new Set([
+  'Eight', 'Family', 'Fine', 'Five', 'Four',
+  'Help', 'Home', 'Hungry', 'I_hate_you', 'I_love_you',
+  'Nine', 'No', 'Okay', 'One', 'Pray',
+  'Seven', 'Six', 'Sorry', 'Three', 'Time',
+  'Two', 'Zero',
 ]);
 
 export function useSignDetector() {
   const plugin = useTensorflowModel(
-    require('../assets/sign_model.tflite'),
+    require('../assets/besta_float16.tflite'),
     [],
   );
 
@@ -63,26 +117,23 @@ export function useSignDetector() {
     }
 
     if (inputArray.length === 0) return;
-    console.log(
-  'sample pixels:',
-  inputArray[0],
-  inputArray[1],
-  inputArray[2]
-);
 
-    // ── CRITICAL: Validate input size matches model expectation (224×224×3) ──
+    if (__DEV__) {
+      console.log('sample pixels:', inputArray[0], inputArray[1], inputArray[2]);
+    }
+
+    // ── Validate input size ──
     if (inputArray.length !== EXPECTED_INPUT_SIZE) {
       if (__DEV__) {
         console.warn(
-          `[SignDetector] Input size mismatch! Got ${inputArray.length} values, ` +
-          `expected ${EXPECTED_INPUT_SIZE} (224×224×3). ` +
-          `Did you resize to 160×160 instead of 224×224?`
+          `[SignDetector] Input size mismatch! Got ${inputArray.length}, ` +
+          `expected ${EXPECTED_INPUT_SIZE} (640×640×3).`
         );
       }
       return;
     }
 
-    // ── Validate normalization: values should be in [0,1], not [0,255] ──
+    // ── Validate normalization ──
     if (__DEV__) {
       let maxPixel = 0;
       for (let i = 0; i < Math.min(100, inputArray.length); i++) {
@@ -90,8 +141,8 @@ export function useSignDetector() {
       }
       if (maxPixel > 1.5) {
         console.warn(
-          `[SignDetector] Pixel values appear un-normalized (max sampled: ${maxPixel.toFixed(2)}). ` +
-          'Divide by 255.0 before passing to runInference.'
+          `[SignDetector] Pixels appear un-normalized (max: ${maxPixel.toFixed(2)}). ` +
+          'Divide by 255 before calling runInference.'
         );
       }
     }
@@ -106,45 +157,63 @@ export function useSignDetector() {
       const raw = outputs[0];
       if (raw == null) return;
 
-      let scores: Float32Array;
+      let rawScores: Float32Array;
       if (ArrayBuffer.isView(raw)) {
-        scores = raw as unknown as Float32Array;
+        rawScores = raw as unknown as Float32Array;
       } else if (raw instanceof ArrayBuffer) {
-        scores = new Float32Array(raw);
+        rawScores = new Float32Array(raw);
       } else {
         return;
       }
 
-      if (scores.length === 0) return;
+      if (rawScores.length === 0) return;
 
-      let maxIdx = 0;
-      let maxVal = scores[0]!;
-      for (let i = 1; i < scores.length; i++) {
-        if (scores[i]! > maxVal) {
-          maxVal = scores[i]!;
-          maxIdx = i;
+      // ── YOLOv8 output: [1, 52, 8400] ──
+      // Per anchor layout: [cx, cy, w, h, cls0..cls47]
+      // Find best class score across all 8400 anchors
+      let bestConf = 0;
+      let bestClassIdx = 0;
+
+      for (let a = 0; a < NUM_ANCHORS; a++) {
+        const base = a * (4 + NUM_CLASSES);
+        for (let c = 0; c < NUM_CLASSES; c++) {
+          const score = rawScores[base + 4 + c] ?? 0;
+          if (score > bestConf) {
+            bestConf = score;
+            bestClassIdx = c;
+          }
         }
       }
 
       if (__DEV__) {
-        const indexed = Array.from(scores).map((s, i) => ({ s, i }));
-        indexed.sort((a, b) => b.s - a.s);
-        const top5 = indexed.slice(0, 5)
-          .map(({ s, i }) => `${LABELS[i] ?? i}=${(s * 100).toFixed(1)}%`)
+        // Aggregate best score per class for top-5 log
+        const classBest = new Float32Array(NUM_CLASSES);
+        for (let a = 0; a < NUM_ANCHORS; a++) {
+          const base = a * (4 + NUM_CLASSES);
+          for (let c = 0; c < NUM_CLASSES; c++) {
+            const score = rawScores[base + 4 + c] ?? 0;
+            if (score > classBest[c]!) classBest[c] = score;
+          }
+        }
+        const top5 = Array.from(classBest)
+          .map((s, i) => ({ s, i }))
+          .sort((a, b) => b.s - a.s)
+          .slice(0, 5)
+          .map(({ s, i }) => `${LABELS[i] ?? `cls${i}`}=${(s * 100).toFixed(1)}%`)
           .join(' | ');
-        console.log(`[SignDetector] Input OK (${inputArray.length}) | Top 5: ${top5}`);
+        console.log(`[SignDetector] Top 5: ${top5}`);
       }
 
-      if (maxVal < CONFIDENCE_THRESHOLD) return;
+      if (bestConf < CONFIDENCE_THRESHOLD) return;
 
-      const label = LABELS[maxIdx] ?? `Class ${maxIdx}`;
+      const label = LABELS[bestClassIdx] ?? `Class ${bestClassIdx}`;
       setPrediction({
         label,
-        confidence: Math.round(maxVal * 100),
-        isMedical: MEDICAL_LABELS.has(label),
+        confidence: Math.round(bestConf * 100),
+        isMedical: PHRASE_LABELS.has(label),
       });
     } catch (e) {
-      if (__DEV__) console.error('[SignDetector] Runtime execution inference error:', e);
+      if (__DEV__) console.error('[SignDetector] Inference error:', e);
     }
   }, []);
 
