@@ -23,7 +23,9 @@ import { styles } from '../../../../styles/colors/TranslatorScreenStyle';
 
 const FRAME_INTERVAL_MS = 2000;
 
-// ── Updated for besta_float16.tflite: YOLOv8 input shape [1, 3, 640, 640] ──
+// ── besta_float16.tflite: YOLOv8n
+//    Input tensor shape: [1, 640, 640, 3]  — NHWC, float32
+// ──────────────────────────────────────────────────────────────────────────────
 const MODEL_WIDTH = 640;
 const MODEL_HEIGHT = 640;
 const MODEL_CHANNELS = 3;
@@ -69,8 +71,8 @@ export default function TranslatorScreen() {
       if (now - lastFrameTsRef.current < FRAME_INTERVAL_MS) return;
       lastFrameTsRef.current = now;
 
+      // Resize frame to 640×640 NHWC float32, normalized to [0, 1]
       const resized = resize(frame, {
-        // ── Updated: 640×640 to match YOLOv8 input ──
         scale: { width: MODEL_WIDTH, height: MODEL_HEIGHT },
         pixelFormat: 'rgb',
         dataType: 'float32',
@@ -178,7 +180,7 @@ export default function TranslatorScreen() {
             />
             <Text style={[styles.bannerText, modelState === 'error' && styles.bannerTextError]}>
               {modelState === 'error'
-                ? 'Model configuration runtime asset missing'
+                ? 'Model failed to load — check that besta_float16.tflite is in assets'
                 : 'Loading detection model…'}
             </Text>
           </View>
@@ -215,15 +217,15 @@ export default function TranslatorScreen() {
 
         {/* ── Current prediction card ── */}
         {prediction ? (
-          <View style={[styles.card, prediction.isMedical && styles.cardMedical]}>
+          <View style={[styles.card, prediction.isPhrase && styles.cardMedical]}>
             <Text style={styles.sectionLabel}>CURRENT SIGN</Text>
             <Text style={styles.predictionLabel}>{prediction.label}</Text>
             <View style={styles.predictionMeta}>
               <Text style={styles.predictionConf}>{prediction.confidence}% confidence</Text>
-              {prediction.isMedical && (
+              {prediction.isPhrase && (
                 <View style={styles.medicalTag}>
-                  <MaterialCommunityIcons name="medical-bag" size={12} color={COLOR.amber} />
-                  <Text style={styles.medicalTagText}>Medical Sign</Text>
+                  <MaterialCommunityIcons name="hand-wave" size={12} color={COLOR.amber} />
+                  <Text style={styles.medicalTagText}>Phrase Sign</Text>
                 </View>
               )}
             </View>
@@ -250,17 +252,17 @@ export default function TranslatorScreen() {
                     i < history.length - 1 && styles.historyRowBorder,
                   ]}
                 >
-                  <View style={[styles.historyIconWrap, h.isMedical && styles.historyIconMedical]}>
+                  <View style={[styles.historyIconWrap, h.isPhrase && styles.historyIconMedical]}>
                     <MaterialCommunityIcons
-                      name={h.isMedical ? 'medical-bag' : 'sign-language'}
+                      name={h.isPhrase ? 'hand-wave' : 'sign-language'}
                       size={15}
-                      color={h.isMedical ? COLOR.amber : COLOR.tealBright}
+                      color={h.isPhrase ? COLOR.amber : COLOR.tealBright}
                     />
                   </View>
                   <View style={{ flex: 1, marginLeft: 12 }}>
                     <Text style={styles.historySign}>{h.label}</Text>
-                    {h.isMedical && (
-                      <Text style={styles.historyMedicalLabel}>Medical Sign</Text>
+                    {h.isPhrase && (
+                      <Text style={styles.historyMedicalLabel}>Phrase Sign</Text>
                     )}
                   </View>
                   <Text style={styles.historyTime}>{h.ts}</Text>

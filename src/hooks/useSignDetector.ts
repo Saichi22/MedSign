@@ -55,21 +55,38 @@ export const LABELS = [
 
 export const CONFIDENCE_THRESHOLD = 0.20;
 
-// ── besta_float16.tflite: YOLOv8 expects 640×640×3 ──
+// ── besta_float16.tflite: YOLOv8n
+//    Input  tensor: [1, 640, 640, 3]  — NHWC, float32
+//    Output tensor: [1,  52, 8400]    — float32
+//      52   = 4 bbox coords (cx, cy, w, h) + 48 class scores
+//      8400 = number of anchors
+// ──────────────────────────────────────────────────────────────────────────────
 const MODEL_SIZE = 640;
 const EXPECTED_INPUT_SIZE = MODEL_SIZE * MODEL_SIZE * 3; // 1,228,800
 
-// YOLOv8 output: [1, 52, 8400] → 52 = 4 bbox coords + 48 class scores
-const NUM_CLASSES = LABELS.length;  // 48
+// Memory layout is ROW-MAJOR (C order).
+// Element at feature row `f`, anchor column `a`:
+//   rawScores[f * NUM_ANCHORS + a]
+//
+// Class score for class `c` at anchor `a`:
+//   rawScores[(NUM_BBOX_COORDS + c) * NUM_ANCHORS + a]
+//
+// ⚠️  Do NOT use anchor-first indexing (a * 52 + f) — that would be correct
+//     for shape [1, 8400, 52], which is NOT what this model produces.
+const NUM_CLASSES = LABELS.length;    // 48
 const NUM_ANCHORS = 8400;
+const NUM_BBOX_COORDS = 4;
+const EXPECTED_OUTPUT_SIZE = (NUM_BBOX_COORDS + NUM_CLASSES) * NUM_ANCHORS; // 436,800
 
 export interface Prediction {
   label: string;
   confidence: number;
-  isMedical: boolean;
+  /** True for phrase/word signs (numbers, emotions, common words) vs single letters */
+  isPhrase: boolean;
 }
 
-// Phrase/word signs (shown with medical-bag icon in UI)
+// Phrase/word signs (shown with a distinct icon in UI).
+// These are multi-meaning gestures rather than single alphabet letters.
 const PHRASE_LABELS = new Set([
   'Eight', 'Family', 'Fine', 'Five', 'Four',
   'Help', 'Home', 'Hungry', 'I_hate_you', 'I_love_you',
@@ -122,18 +139,18 @@ export function useSignDetector() {
       console.log('sample pixels:', inputArray[0], inputArray[1], inputArray[2]);
     }
 
-    // ── Validate input size ──
+    // ── Validate input size: must be 640×640×3 = 1,228,800 floats ──
     if (inputArray.length !== EXPECTED_INPUT_SIZE) {
       if (__DEV__) {
         console.warn(
           `[SignDetector] Input size mismatch! Got ${inputArray.length}, ` +
-          `expected ${EXPECTED_INPUT_SIZE} (640×640×3).`
+          `expected ${EXPECTED_INPUT_SIZE} (640×640×3).`,
         );
       }
       return;
     }
 
-    // ── Validate normalization ──
+    // ── Validate normalization (values should be in [0, 1]) ──
     if (__DEV__) {
       let maxPixel = 0;
       for (let i = 0; i < Math.min(100, inputArray.length); i++) {
@@ -142,7 +159,7 @@ export function useSignDetector() {
       if (maxPixel > 1.5) {
         console.warn(
           `[SignDetector] Pixels appear un-normalized (max: ${maxPixel.toFixed(2)}). ` +
-          'Divide by 255 before calling runInference.'
+          'Divide by 255 before calling runInference.',
         );
       }
     }
@@ -150,7 +167,7 @@ export function useSignDetector() {
     try {
       const safeBuffer = inputArray.buffer.slice(
         inputArray.byteOffset,
-        inputArray.byteOffset + inputArray.byteLength
+        inputArray.byteOffset + inputArray.byteLength,
       ) as ArrayBuffer;
 
       const outputs = model.runSync([safeBuffer]);
@@ -168,16 +185,30 @@ export function useSignDetector() {
 
       if (rawScores.length === 0) return;
 
-      // ── YOLOv8 output: [1, 52, 8400] ──
-      // Per anchor layout: [cx, cy, w, h, cls0..cls47]
-      // Find best class score across all 8400 anchors
+      // ── Validate output size: must be 52×8400 = 436,800 floats ──
+      if (__DEV__ && rawScores.length !== EXPECTED_OUTPUT_SIZE) {
+        console.warn(
+          `[SignDetector] Output size mismatch! Got ${rawScores.length}, ` +
+          `expected ${EXPECTED_OUTPUT_SIZE} (52×8400).`,
+        );
+      }
+
+      // ── Decode YOLOv8 output: shape [1, 52, 8400] ──
+      //
+      // Memory is row-major, so for feature row `f` and anchor column `a`:
+      //   rawScores[f * NUM_ANCHORS + a]
+      //
+      // Class score for class `c` at anchor `a`:
+      //   rawScores[(NUM_BBOX_COORDS + c) * NUM_ANCHORS + a]
+      //
+      // We scan all (class, anchor) pairs to find the globally highest score.
       let bestConf = 0;
       let bestClassIdx = 0;
 
-      for (let a = 0; a < NUM_ANCHORS; a++) {
-        const base = a * (4 + NUM_CLASSES);
-        for (let c = 0; c < NUM_CLASSES; c++) {
-          const score = rawScores[base + 4 + c] ?? 0;
+      for (let c = 0; c < NUM_CLASSES; c++) {
+        const rowBase = (NUM_BBOX_COORDS + c) * NUM_ANCHORS;
+        for (let a = 0; a < NUM_ANCHORS; a++) {
+          const score = rawScores[rowBase + a] ?? 0;
           if (score > bestConf) {
             bestConf = score;
             bestClassIdx = c;
@@ -186,12 +217,12 @@ export function useSignDetector() {
       }
 
       if (__DEV__) {
-        // Aggregate best score per class for top-5 log
+        // Aggregate the best score per class for a top-5 summary log
         const classBest = new Float32Array(NUM_CLASSES);
-        for (let a = 0; a < NUM_ANCHORS; a++) {
-          const base = a * (4 + NUM_CLASSES);
-          for (let c = 0; c < NUM_CLASSES; c++) {
-            const score = rawScores[base + 4 + c] ?? 0;
+        for (let c = 0; c < NUM_CLASSES; c++) {
+          const rowBase = (NUM_BBOX_COORDS + c) * NUM_ANCHORS;
+          for (let a = 0; a < NUM_ANCHORS; a++) {
+            const score = rawScores[rowBase + a] ?? 0;
             if (score > classBest[c]!) classBest[c] = score;
           }
         }
@@ -210,7 +241,7 @@ export function useSignDetector() {
       setPrediction({
         label,
         confidence: Math.round(bestConf * 100),
-        isMedical: PHRASE_LABELS.has(label),
+        isPhrase: PHRASE_LABELS.has(label),
       });
     } catch (e) {
       if (__DEV__) console.error('[SignDetector] Inference error:', e);
