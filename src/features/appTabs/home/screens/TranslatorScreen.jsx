@@ -15,59 +15,42 @@ import {
 } from 'react-native-vision-camera';
 import { useResizePlugin } from 'vision-camera-resize-plugin';
 import { Worklets } from 'react-native-worklets-core';
-import {
-  useSignDetector,
-  MODEL_WIDTH,
-  MODEL_HEIGHT,
-  MODEL_CHANNELS,
-  EXPECTED_INPUT_SIZE,
-} from '../../../../hooks/useSignDetector';
+import { useSignDetector } from '../../../../hooks/useSignDetector';
 import MaterialCommunityIcons from 'react-native-vector-icons/MaterialCommunityIcons';
 
 import { COLOR } from '../../../../styles/colors/theme';
 import { styles } from '../../../../styles/colors/TranslatorScreenStyle';
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Constants
-// ─────────────────────────────────────────────────────────────────────────────
+const FRAME_INTERVAL_MS = 2000;
 
-/**
- * Minimum time between inference calls (ms).
- * The besta YOLO model processes 640×640 frames which is heavier than the
- * old 224×224 classifier — keep the interval a bit longer to avoid
- * thread starvation on mid-range devices.
- */
-const FRAME_INTERVAL_MS = 2500;
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Component
-// ─────────────────────────────────────────────────────────────────────────────
+// ── Updated for besta_float16.tflite: YOLOv8 input shape [1, 3, 640, 640] ──
+const MODEL_WIDTH = 640;
+const MODEL_HEIGHT = 640;
+const MODEL_CHANNELS = 3;
+const EXPECTED_SIZE = MODEL_WIDTH * MODEL_HEIGHT * MODEL_CHANNELS; // 1,228,800
 
 export default function TranslatorScreen() {
   const { hasPermission, requestPermission } = useCameraPermission();
   const device = useCameraDevice('front');
   const { resize } = useResizePlugin();
 
-  const { state: modelState, isReady, prediction, reset, runInference } =
-    useSignDetector();
+  const { state: modelState, isReady, prediction, reset, runInference } = useSignDetector();
   const modelReady = isReady;
 
   const [isActive, setIsActive] = useState(false);
   const [history, setHistory] = useState([]);
 
-  // Request camera permission on mount
   useEffect(() => {
     if (!hasPermission) requestPermission();
   }, [hasPermission, requestPermission]);
 
-  // ── Stable refs so worklet closure never becomes stale ────────────────────
   const runInferenceRef = useRef(runInference);
   useEffect(() => { runInferenceRef.current = runInference; }, [runInference]);
 
   const isReadyRef = useRef(isReady);
   useEffect(() => { isReadyRef.current = isReady; }, [isReady]);
 
-  // ── JS-thread bridge (created once) ───────────────────────────────────────
+  // ── Stable JS bridge — created once, refs keep it current ──
   const runOnJS = useRef(
     Worklets.createRunOnJS((dataPayload: number[]) => {
       if (!isReadyRef.current) return;
@@ -77,14 +60,6 @@ export default function TranslatorScreen() {
 
   const lastFrameTsRef = useRef(0);
 
-  // ── Frame processor ───────────────────────────────────────────────────────
-  /**
-   * Key changes vs. the old 224-px classifier:
-   *
-   * 1. Resize target is now 640×640 to match besta_float16's input tensor.
-   * 2. The front camera mirror-flip is still applied (horizontal X-axis flip).
-   * 3. EXPECTED_INPUT_SIZE is now 1,228,800 (640×640×3).
-   */
   const frameProcessor = useFrameProcessor(
     (frame) => {
       'worklet';
@@ -93,36 +68,33 @@ export default function TranslatorScreen() {
       if (now - lastFrameTsRef.current < FRAME_INTERVAL_MS) return;
       lastFrameTsRef.current = now;
 
-      // Resize + normalise to [0,1] float32
       const resized = resize(frame, {
-        scale:       { width: MODEL_WIDTH, height: MODEL_HEIGHT },
+        // ── Updated: 640×640 to match YOLOv8 input ──
+        scale: { width: MODEL_WIDTH, height: MODEL_HEIGHT },
         pixelFormat: 'rgb',
-        dataType:    'float32',
-        normalize:   { mean: [0, 0, 0], std: [255, 255, 255] },
+        dataType: 'float32',
+        normalize: { mean: [0, 0, 0], std: [255, 255, 255] },
       });
 
-      if (resized == null) return;
-
-      // Mirror the front-camera feed horizontally so gestures aren't reversed.
-      // We swap x → (MODEL_WIDTH - 1 - x) while keeping y and channel intact.
-      const plainArray = new Array(EXPECTED_INPUT_SIZE);
-      for (let y = 0; y < MODEL_HEIGHT; y++) {
-        for (let x = 0; x < MODEL_WIDTH; x++) {
-          const srcX = MODEL_WIDTH - 1 - x;
-          for (let c = 0; c < MODEL_CHANNELS; c++) {
-            const dstIdx = (y * MODEL_WIDTH + x)   * MODEL_CHANNELS + c;
-            const srcIdx = (y * MODEL_WIDTH + srcX) * MODEL_CHANNELS + c;
-            plainArray[dstIdx] = resized[srcIdx] ?? 0.0;
+      if (resized != null) {
+        // Mirror horizontally (front camera flip correction)
+        const plainArray = new Array(EXPECTED_SIZE);
+        for (let y = 0; y < MODEL_HEIGHT; y++) {
+          for (let x = 0; x < MODEL_WIDTH; x++) {
+            const srcX = MODEL_WIDTH - 1 - x;
+            for (let c = 0; c < MODEL_CHANNELS; c++) {
+              const dstIdx = (y * MODEL_WIDTH + x) * MODEL_CHANNELS + c;
+              const srcIdx = (y * MODEL_WIDTH + srcX) * MODEL_CHANNELS + c;
+              plainArray[dstIdx] = resized[srcIdx] ?? 0.0;
+            }
           }
         }
+        runOnJS(plainArray);
       }
-
-      runOnJS(plainArray);
     },
     [runOnJS],
   );
 
-  // ── Accumulate prediction history ─────────────────────────────────────────
   useEffect(() => {
     if (!prediction || !isActive) return;
     setHistory(prev =>
@@ -130,7 +102,6 @@ export default function TranslatorScreen() {
     );
   }, [prediction, isActive]);
 
-  // ── Toggle detection session ──────────────────────────────────────────────
   const handleToggle = useCallback(() => {
     setIsActive(prev => {
       if (prev) {
@@ -140,10 +111,6 @@ export default function TranslatorScreen() {
       return !prev;
     });
   }, [reset]);
-
-  // ─────────────────────────────────────────────────────────────────────────
-  // Permission / device guards
-  // ─────────────────────────────────────────────────────────────────────────
 
   if (!hasPermission) {
     return (
@@ -174,15 +141,11 @@ export default function TranslatorScreen() {
     );
   }
 
-  // ─────────────────────────────────────────────────────────────────────────
-  // Render
-  // ─────────────────────────────────────────────────────────────────────────
-
   return (
     <View style={styles.root}>
       <StatusBar barStyle="light-content" backgroundColor={COLOR.tealDeep} />
 
-      {/* ── Header ──────────────────────────────────────────────────────── */}
+      {/* ── Header ── */}
       <View style={styles.header}>
         <View style={styles.headerBlob} />
         <View style={styles.headerTop}>
@@ -204,7 +167,7 @@ export default function TranslatorScreen() {
         contentContainerStyle={styles.scrollContent}
         showsVerticalScrollIndicator={false}
       >
-        {/* ── Model loading / error banner ─────────────────────────────── */}
+        {/* ── Model loading banner ── */}
         {!modelReady && (
           <View style={[styles.bannerCard, modelState === 'error' && styles.bannerCardError]}>
             <MaterialCommunityIcons
@@ -214,13 +177,13 @@ export default function TranslatorScreen() {
             />
             <Text style={[styles.bannerText, modelState === 'error' && styles.bannerTextError]}>
               {modelState === 'error'
-                ? 'besta_float16.tflite could not be loaded — check assets path'
-                : 'Loading besta detection model…'}
+                ? 'Model configuration runtime asset missing'
+                : 'Loading detection model…'}
             </Text>
           </View>
         )}
 
-        {/* ── Viewfinder card ──────────────────────────────────────────── */}
+        {/* ── Viewfinder card ── */}
         <View style={styles.card}>
           <View style={styles.cardHeader}>
             <View style={styles.cardTitleRow}>
@@ -242,7 +205,6 @@ export default function TranslatorScreen() {
               frameProcessor={isActive ? frameProcessor : undefined}
               pixelFormat="rgb"
             />
-            {/* Corner overlay brackets */}
             <View style={[styles.corner, styles.cornerTL]} pointerEvents="none" />
             <View style={[styles.corner, styles.cornerTR]} pointerEvents="none" />
             <View style={[styles.corner, styles.cornerBL]} pointerEvents="none" />
@@ -250,7 +212,7 @@ export default function TranslatorScreen() {
           </View>
         </View>
 
-        {/* ── Current prediction ───────────────────────────────────────── */}
+        {/* ── Current prediction card ── */}
         {prediction ? (
           <View style={[styles.card, prediction.isMedical && styles.cardMedical]}>
             <Text style={styles.sectionLabel}>CURRENT SIGN</Text>
@@ -274,7 +236,7 @@ export default function TranslatorScreen() {
           </View>
         )}
 
-        {/* ── History ──────────────────────────────────────────────────── */}
+        {/* ── History ── */}
         {history.length > 0 && (
           <>
             <Text style={styles.sectionLabelSpaced}>RECENT SIGNS</Text>
@@ -307,7 +269,7 @@ export default function TranslatorScreen() {
           </>
         )}
 
-        {/* ── Start / Stop CTA ─────────────────────────────────────────── */}
+        {/* ── CTA ── */}
         <TouchableOpacity
           style={[styles.primaryBtn, isActive && styles.stopBtn]}
           onPress={handleToggle}
