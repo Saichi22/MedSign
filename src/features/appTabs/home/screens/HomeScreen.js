@@ -1,30 +1,21 @@
-// HomeScreen.js
 import React, { useRef, useEffect, useState, useCallback } from 'react';
 import {
-  View,
-  Text,
-  TouchableOpacity,
-  ScrollView,
-  StatusBar,
-  Animated,
-  StyleSheet,
+  View, Text, TouchableOpacity, ScrollView,
+  StatusBar, Animated, StyleSheet,
 } from 'react-native';
+import { useNavigation } from '@react-navigation/native';
 import MaterialCommunityIcons from 'react-native-vector-icons/MaterialCommunityIcons';
 import { useAuth } from '../../../auth/services/AuthContext';
-
 import {
-  Camera,
-  useCameraDevice,
-  useCameraPermission,
-  useFrameProcessor,
+  Camera, useCameraDevice, useCameraPermission, useFrameProcessor,
 } from 'react-native-vision-camera';
 import { Worklets } from 'react-native-worklets-core';
 import { useResizePlugin } from 'vision-camera-resize-plugin';
 import { useSignDetector } from '../../../../hooks/useSignDetector';
-
 import { COLOR } from '../../../../styles/colors/theme';
 import { styles } from '../../../../styles/colors/HomeScreenStyle';
 
+// Must match hook: 640×640×3
 const FRAME_INTERVAL_MS = 2000;
 const MODEL_WIDTH    = 640;
 const MODEL_HEIGHT   = 640;
@@ -33,6 +24,7 @@ const EXPECTED_SIZE  = MODEL_WIDTH * MODEL_HEIGHT * MODEL_CHANNELS; // 1,228,800
 
 export default function HomeScreen() {
   const { user } = useAuth();
+  const navigation = useNavigation();
   const { hasPermission, requestPermission } = useCameraPermission();
   const device = useCameraDevice('front');
   const { resize } = useResizePlugin();
@@ -46,21 +38,27 @@ export default function HomeScreen() {
     if (!hasPermission) requestPermission();
   }, [hasPermission, requestPermission]);
 
+  // ── Keep worklet-safe refs current ───────────────────────────────────────
   const runInferenceRef = useRef(runInference);
   useEffect(() => { runInferenceRef.current = runInference; }, [runInference]);
 
   const isReadyRef = useRef(isReady);
   useEffect(() => { isReadyRef.current = isReady; }, [isReady]);
 
+  const isRecordingRef = useRef(isRecording);
+  useEffect(() => { isRecordingRef.current = isRecording; }, [isRecording]);
+
+  // ── Stable JS bridge — created ONCE via useRef ───────────────────────────
   const runOnJS = useRef(
     Worklets.createRunOnJS((dataPayload) => {
-      if (!isReadyRef.current) return;
+      if (!isReadyRef.current || !isRecordingRef.current) return;
       runInferenceRef.current?.(dataPayload);
     }),
   ).current;
 
   const lastFrameTsRef = useRef(0);
 
+  // ── Frame processor ───────────────────────────────────────────────────────
   const frameProcessor = useFrameProcessor(
     (frame) => {
       'worklet';
@@ -70,18 +68,31 @@ export default function HomeScreen() {
 
       const resized = resize(frame, {
         scale:       { width: MODEL_WIDTH, height: MODEL_HEIGHT },
-        pixelFormat: 'rgb',
+        pixelFormat: 'rgb',       // must be rgb, not yuv
         dataType:    'float32',
-        mirror:      true,
+        normalize:   { mean: [0, 0, 0], std: [255, 255, 255] },
       });
 
       if (resized != null) {
-        runOnJS(resized);
+        // Horizontal flip for front-camera mirroring
+        const plainArray = new Array(EXPECTED_SIZE);
+        for (let y = 0; y < MODEL_HEIGHT; y++) {
+          for (let x = 0; x < MODEL_WIDTH; x++) {
+            const srcX = MODEL_WIDTH - 1 - x;
+            for (let c = 0; c < MODEL_CHANNELS; c++) {
+              const dstIdx = (y * MODEL_WIDTH + x)    * MODEL_CHANNELS + c;
+              const srcIdx = (y * MODEL_WIDTH + srcX) * MODEL_CHANNELS + c;
+              plainArray[dstIdx] = resized[srcIdx] ?? 0.0;
+            }
+          }
+        }
+        runOnJS(plainArray);
       }
     },
     [runOnJS],
   );
 
+  // ── Append predictions to history while recording ────────────────────────
   useEffect(() => {
     if (!prediction || !isRecording) return;
     setHistory(prev =>
@@ -89,6 +100,7 @@ export default function HomeScreen() {
     );
   }, [prediction, isRecording]);
 
+  // ── Toggle recording ──────────────────────────────────────────────────────
   const handleToggle = useCallback(() => {
     setIsRecording(prev => {
       if (prev) { reset(); setHistory([]); }
@@ -96,6 +108,7 @@ export default function HomeScreen() {
     });
   }, [reset]);
 
+  // ── Animations (unchanged from your working version) ─────────────────────
   const headerFade   = useRef(new Animated.Value(0)).current;
   const headerSlide  = useRef(new Animated.Value(-20)).current;
   const cardFade     = useRef(new Animated.Value(0)).current;
@@ -171,6 +184,7 @@ export default function HomeScreen() {
       </Animated.View>
 
       <ScrollView style={{ flex: 1 }} contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
+
         {!isReady && (
           <View style={[styles.bannerCard, modelState === 'error' && styles.bannerCardError]}>
             <MaterialCommunityIcons
@@ -211,7 +225,7 @@ export default function HomeScreen() {
                   device={device}
                   isActive={true}
                   frameProcessor={frameProcessor}
-                  pixelFormat="yuv"
+                  pixelFormat="rgb"
                 />
               ) : (
                 <View style={styles.viewfinderCenter}>
@@ -229,6 +243,12 @@ export default function HomeScreen() {
               <View style={[styles.corner, styles.cornerTR]} pointerEvents="none" />
               <View style={[styles.corner, styles.cornerBL]} pointerEvents="none" />
               <View style={[styles.corner, styles.cornerBR]} pointerEvents="none" />
+              {isRecording && (
+                <Animated.View
+                  style={[styles.pulseRing, { opacity: pulseOpacity, transform: [{ scale: pulseAnim }] }]}
+                  pointerEvents="none"
+                />
+              )}
             </View>
           </View>
 
