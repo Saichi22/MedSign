@@ -85,6 +85,12 @@ export function useSignDetector() {
   );
 
   const isReady = plugin.state === 'loaded' && plugin.model != null;
+  useEffect(() => {
+  if (plugin.state === 'loaded' && plugin.model != null) {
+    console.log('[Model] inputs:', JSON.stringify(plugin.model.inputs));
+    console.log('[Model] outputs:', JSON.stringify(plugin.model.outputs));
+  }
+}, [plugin.state]);
   const [prediction, setPrediction] = useState<Prediction | null>(null);
 
   useEffect(() => {
@@ -98,28 +104,45 @@ export function useSignDetector() {
 
   const reset = useCallback(() => setPrediction(null), []);
 
-  const runInference = useCallback((resizedData: unknown) => {
-    const model = modelRef.current;
-    if (model == null) return;
+const runInference = useCallback((resizedData: unknown) => {
+  const model = modelRef.current;
+  if (model == null) return;
 
-    let inputArray: Float32Array;
+  let inputArray: Float32Array;
 
-    if (resizedData instanceof Float32Array) {
-      inputArray = resizedData;
-    } else if (Array.isArray(resizedData)) {
-      inputArray = new Float32Array(resizedData);
-    } else if (resizedData && typeof resizedData === 'object' && 'buffer' in resizedData) {
-      const view = resizedData as ArrayBufferView;
-      inputArray = new Float32Array(view.buffer, view.byteOffset, view.byteLength / 4);
-    } else {
-      if (__DEV__) console.warn('[SignDetector] Unknown input type:', typeof resizedData);
-      return;
+  if (resizedData instanceof Float32Array) {
+    inputArray = resizedData;
+  } else if (Array.isArray(resizedData)) {
+    inputArray = new Float32Array(resizedData);
+  } else if (
+    resizedData != null &&
+    typeof resizedData === 'object' &&
+    '0' in (resizedData as object)
+  ) {
+    // ← Worklet bridge serializes typed arrays as plain objects with numeric keys
+    const obj = resizedData as Record<number, number>;
+    const length = Object.keys(obj).length;
+    inputArray = new Float32Array(length);
+    for (let i = 0; i < length; i++) {
+      inputArray[i] = obj[i] ?? 0;
     }
+  } else if (resizedData != null && typeof resizedData === 'object' && 'buffer' in resizedData) {
+    const view = resizedData as ArrayBufferView;
+    inputArray = new Float32Array(view.buffer, view.byteOffset, view.byteLength / 4);
+  } else {
+    console.warn('[SignDetector] Unknown input type:', typeof resizedData);
+    return;
+  }
 
     if (inputArray.length === 0) return;
 
     if (__DEV__) {
-      console.log('sample pixels:', inputArray[0], inputArray[1], inputArray[2]);
+      console.log(
+  'sample pixels:',
+  inputArray[0],
+  inputArray[640 * 640],
+  inputArray[640 * 640 * 2]
+);
     }
 
     // ── Validate input size ──
@@ -166,35 +189,71 @@ export function useSignDetector() {
         return;
       }
 
-      if (rawScores.length === 0) return;
+if (rawScores.length === 0) return;
 
-      // ── YOLOv8 output: [1, 52, 8400] ──
-      // Per anchor layout: [cx, cy, w, h, cls0..cls47]
-      // Find best class score across all 8400 anchors
-      let bestConf = 0;
-      let bestClassIdx = 0;
+if (__DEV__) {
+  console.log(
+    'first anchor:',
+    rawScores[0],
+    rawScores[8400],
+    rawScores[16800],
+    rawScores[25200],
+    rawScores[33600],
+  );
+  console.log(
+  'alt first class values:',
+  rawScores[4],
+  rawScores[5],
+  rawScores[6],
+  rawScores[7],
+  rawScores[8],
+  rawScores[9],
+  rawScores[10],
+);
 
-      for (let a = 0; a < NUM_ANCHORS; a++) {
-        const base = a * (4 + NUM_CLASSES);
-        for (let c = 0; c < NUM_CLASSES; c++) {
-          const score = rawScores[base + 4 + c] ?? 0;
-          if (score > bestConf) {
-            bestConf = score;
-            bestClassIdx = c;
-          }
-        }
+  // ADD THIS BLOCK
+  for (let c = 0; c < NUM_CLASSES; c++) {
+    let maxScore = -Infinity;
+
+    for (let a = 0; a < NUM_ANCHORS; a++) {
+      const score = rawScores[(4 + c) * NUM_ANCHORS + a];
+
+      if (score > maxScore) {
+        maxScore = score;
       }
+    }
+  }
+}
+
+let bestConf = 0;
+let bestClassIdx = -1;
+for (let a = 0; a < NUM_ANCHORS; a++) {
+  for (let c = 0; c < NUM_CLASSES; c++) {
+    const score = rawScores[(4 + c) * NUM_ANCHORS + a] ?? 0;
+
+    if (score > bestConf) {
+      bestConf = score;
+      bestClassIdx = c;
+    }
+  }
+}
+
+      console.log('Output length:', rawScores.length);
+console.log('Expected:', 52 * 8400);
 
       if (__DEV__) {
         // Aggregate best score per class for top-5 log
         const classBest = new Float32Array(NUM_CLASSES);
-        for (let a = 0; a < NUM_ANCHORS; a++) {
-          const base = a * (4 + NUM_CLASSES);
-          for (let c = 0; c < NUM_CLASSES; c++) {
-            const score = rawScores[base + 4 + c] ?? 0;
-            if (score > classBest[c]!) classBest[c] = score;
-          }
-        }
+
+for (let a = 0; a < NUM_ANCHORS; a++) {
+  for (let c = 0; c < NUM_CLASSES; c++) {
+    const score = rawScores[(4 + c) * NUM_ANCHORS + a] ?? 0;
+
+    if (score > classBest[c]!) {
+      classBest[c] = score;
+    }
+  }
+}
         const top5 = Array.from(classBest)
           .map((s, i) => ({ s, i }))
           .sort((a, b) => b.s - a.s)
@@ -203,8 +262,11 @@ export function useSignDetector() {
           .join(' | ');
         console.log(`[SignDetector] Top 5: ${top5}`);
       }
-
-      if (bestConf < CONFIDENCE_THRESHOLD) return;
+console.log('bestConf=', bestConf);
+      if (bestConf < CONFIDENCE_THRESHOLD) {
+  setPrediction(null);
+  return;
+}
 
       const label = LABELS[bestClassIdx] ?? `Class ${bestClassIdx}`;
       setPrediction({

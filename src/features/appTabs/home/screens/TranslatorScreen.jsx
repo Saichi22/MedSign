@@ -23,11 +23,9 @@ import { styles } from '../../../../styles/colors/TranslatorScreenStyle';
 
 const FRAME_INTERVAL_MS = 2000;
 
-// ── Updated for besta_float16.tflite: YOLOv8 input shape [1, 3, 640, 640] ──
 const MODEL_WIDTH = 640;
 const MODEL_HEIGHT = 640;
 const MODEL_CHANNELS = 3;
-const EXPECTED_SIZE = MODEL_WIDTH * MODEL_HEIGHT * MODEL_CHANNELS; // 1,228,800
 
 export default function TranslatorScreen() {
   const { hasPermission, requestPermission } = useCameraPermission();
@@ -50,50 +48,51 @@ export default function TranslatorScreen() {
   const isReadyRef = useRef(isReady);
   useEffect(() => { isReadyRef.current = isReady; }, [isReady]);
 
-  // ── Stable JS bridge — created once, refs keep it current ──
-  const runOnJS = useRef(
-    Worklets.createRunOnJS((dataPayload: number[]) => {
-      if (!isReadyRef.current) return;
-      runInferenceRef.current?.(dataPayload);
-    }),
-  ).current;
+  // Stable JS bridge — created once, refs keep it current
+const runOnJS = useRef(
+  Worklets.createRunOnJS((data) => {
+    if (!isReadyRef.current) return;
+    // Convert the object-like to a proper Array on the JS side before inference
+    const arr = Array.from(
+      { length: Object.keys(data).length },
+      (_, i) => data[i] ?? 0
+    );
+    runInferenceRef.current?.(arr);
+  }),
+).current;
 
   const lastFrameTsRef = useRef(0);
 
-  const frameProcessor = useFrameProcessor(
-    (frame) => {
-      'worklet';
+const frameProcessor = useFrameProcessor(
+  (frame) => {
+    'worklet';
 
-      const now = Date.now();
-      if (now - lastFrameTsRef.current < FRAME_INTERVAL_MS) return;
-      lastFrameTsRef.current = now;
+    const now = Date.now();
+    if (now - lastFrameTsRef.current < FRAME_INTERVAL_MS) return;
+    lastFrameTsRef.current = now;
 
+    console.log('[Worklet] frame fired, format:', frame.pixelFormat, 'size:', frame.width, 'x', frame.height);
+
+    try {
       const resized = resize(frame, {
-        // ── Updated: 640×640 to match YOLOv8 input ──
         scale: { width: MODEL_WIDTH, height: MODEL_HEIGHT },
         pixelFormat: 'rgb',
         dataType: 'float32',
         normalize: { mean: [0, 0, 0], std: [255, 255, 255] },
       });
 
-      if (resized != null) {
-        // Mirror horizontally (front camera flip correction)
-        const plainArray = new Array(EXPECTED_SIZE);
-        for (let y = 0; y < MODEL_HEIGHT; y++) {
-          for (let x = 0; x < MODEL_WIDTH; x++) {
-            const srcX = MODEL_WIDTH - 1 - x;
-            for (let c = 0; c < MODEL_CHANNELS; c++) {
-              const dstIdx = (y * MODEL_WIDTH + x) * MODEL_CHANNELS + c;
-              const srcIdx = (y * MODEL_WIDTH + srcX) * MODEL_CHANNELS + c;
-              plainArray[dstIdx] = resized[srcIdx] ?? 0.0;
-            }
-          }
-        }
-        runOnJS(plainArray);
-      }
-    },
-    [runOnJS],
-  );
+      console.log('[Worklet] resized null?', resized == null);
+      if (resized == null) return;
+
+      console.log('[Worklet] calling runOnJS');
+      const arr = Array.from(resized); // Float32Array → plain JS array in worklet context
+runOnJS(arr);
+    } catch (e) {
+      console.log('[Worklet] resize ERROR:', String(e));
+    }
+  },
+  [runOnJS],
+);
 
   useEffect(() => {
     if (!prediction || !isActive) return;
@@ -145,7 +144,7 @@ export default function TranslatorScreen() {
     <View style={styles.root}>
       <StatusBar barStyle="light-content" backgroundColor={COLOR.tealDeep} />
 
-      {/* ── Header ── */}
+      {/* Header */}
       <View style={styles.header}>
         <View style={styles.headerBlob} />
         <View style={styles.headerTop}>
@@ -167,7 +166,7 @@ export default function TranslatorScreen() {
         contentContainerStyle={styles.scrollContent}
         showsVerticalScrollIndicator={false}
       >
-        {/* ── Model loading banner ── */}
+        {/* Model loading banner */}
         {!modelReady && (
           <View style={[styles.bannerCard, modelState === 'error' && styles.bannerCardError]}>
             <MaterialCommunityIcons
@@ -183,7 +182,7 @@ export default function TranslatorScreen() {
           </View>
         )}
 
-        {/* ── Viewfinder card ── */}
+        {/* Viewfinder card */}
         <View style={styles.card}>
           <View style={styles.cardHeader}>
             <View style={styles.cardTitleRow}>
@@ -198,13 +197,13 @@ export default function TranslatorScreen() {
           </View>
 
           <View style={styles.viewfinderWrap}>
-            <Camera
-              style={StyleSheet.absoluteFill}
-              device={device}
-              isActive={true}
-              frameProcessor={isActive ? frameProcessor : undefined}
-              pixelFormat="rgb"
-            />
+<Camera
+  style={StyleSheet.absoluteFill}
+  device={device}
+  isActive={true}
+  frameProcessor={isActive ? frameProcessor : undefined}
+  // ← remove pixelFormat="rgb" here
+/>
             <View style={[styles.corner, styles.cornerTL]} pointerEvents="none" />
             <View style={[styles.corner, styles.cornerTR]} pointerEvents="none" />
             <View style={[styles.corner, styles.cornerBL]} pointerEvents="none" />
@@ -212,7 +211,7 @@ export default function TranslatorScreen() {
           </View>
         </View>
 
-        {/* ── Current prediction card ── */}
+        {/* Current prediction card */}
         {prediction ? (
           <View style={[styles.card, prediction.isMedical && styles.cardMedical]}>
             <Text style={styles.sectionLabel}>CURRENT SIGN</Text>
@@ -236,7 +235,7 @@ export default function TranslatorScreen() {
           </View>
         )}
 
-        {/* ── History ── */}
+        {/* History */}
         {history.length > 0 && (
           <>
             <Text style={styles.sectionLabelSpaced}>RECENT SIGNS</Text>
@@ -269,7 +268,7 @@ export default function TranslatorScreen() {
           </>
         )}
 
-        {/* ── CTA ── */}
+        {/* CTA */}
         <TouchableOpacity
           style={[styles.primaryBtn, isActive && styles.stopBtn]}
           onPress={handleToggle}
