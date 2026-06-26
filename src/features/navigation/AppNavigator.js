@@ -12,6 +12,7 @@ import RegisterScreen from '../auth/screens/RegisterScreen';
 import HomeScreen from '../appTabs/home/screens/HomeScreen';
 import SettingsScreen from '../appTabs/settings/screens/SettingsScreen';
 import TranslatorScreen from '../appTabs/home/screens/TranslatorScreen';
+import PhrasebookScreen from '../appTabs/home/screens/PhrasebookScreen';
 
 const Stack = createStackNavigator();
 const Tab = createBottomTabNavigator();
@@ -76,7 +77,12 @@ function AppStack() {
       <Stack.Screen 
         name="Translator" 
         component={TranslatorScreen} 
-        options={{ headerShown: false, title: 'Translator' }} // Adjust header needs here
+        options={{ headerShown: false, title: 'Translator' }} 
+      />
+      <Stack.Screen 
+        name="Phrasebook" 
+        component={PhrasebookScreen} 
+        options={{ headerShown: false, title: 'Phrasebook' }} 
       />
     </Stack.Navigator>
   );
@@ -95,7 +101,7 @@ export default function AppNavigator() {
 
   return (
     <NavigationContainer>
-     {user ? <AppStack /> : <AuthStack />}
+      {user ? <AppStack /> : <AuthStack />}
     </NavigationContainer>
   );
 }

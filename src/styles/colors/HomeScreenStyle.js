@@ -1,13 +1,14 @@
-// HomeScreen.styles.js
+// HomeScreenStyle.js
 import { StyleSheet, Platform } from 'react-native';
-import { COLOR, FONT, RADIUS, WINDOW_WIDTH as W } from './theme'; 
-
+import { COLOR, FONT, RADIUS, WINDOW_WIDTH as W } from './theme';
 
 export const styles = StyleSheet.create({
   root: {
     flex: 1,
     backgroundColor: COLOR.bgPage,
   },
+
+  // ── Header ───────────────────────────────────────────────────────────────────
   header: {
     backgroundColor: COLOR.tealDeep,
     paddingTop: Platform.OS === 'ios' ? 60 : 44,
@@ -30,7 +31,7 @@ export const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'flex-start',
-    marginBottom: 20,
+    marginBottom: 4,
   },
   headerGreeting: {
     fontFamily: FONT.sans,
@@ -56,51 +57,20 @@ export const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  statsRow: {
-    flexDirection: 'row',
-    backgroundColor: 'rgba(255,255,255,0.08)',
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.10)',
-    borderRadius: RADIUS.md,
-    paddingVertical: 14,
-    paddingHorizontal: 16,
-    alignItems: 'center',
-  },
-  statBadge: {
-    flex: 1,
-    alignItems: 'center',
-    gap: 3,
-  },
-  statDivider: {
-    width: 1,
-    height: 32,
-    backgroundColor: 'rgba(255,255,255,0.12)',
-  },
-  statValue: {
-    fontFamily: FONT.serif,
-    fontSize: 17,
-    color: COLOR.tealLight,
-    letterSpacing: -0.3,
-  },
-  statLabel: {
-    fontFamily: FONT.sans,
-    fontSize: 9,
-    fontWeight: '600',
-    color: 'rgba(255,255,255,0.40)',
-    textTransform: 'uppercase',
-    letterSpacing: 0.8,
-  },
+
+  // ── Scroll ────────────────────────────────────────────────────────────────────
   scrollContent: {
     paddingHorizontal: 20,
     paddingTop: 24,
-    paddingBottom: 40,
-    gap: 0,
+    paddingBottom: 48,
   },
+
+  // ── Translator Card ───────────────────────────────────────────────────────────
   translatorCard: {
     backgroundColor: COLOR.bgCard,
     borderRadius: RADIUS.xl,
     padding: 20,
-    marginBottom: 24,
+    marginBottom: 28,
     borderWidth: 1,
     borderColor: COLOR.borderCard,
     shadowColor: COLOR.tealDeep,
@@ -163,9 +133,7 @@ export const styles = StyleSheet.create({
     borderRadius: 3,
     backgroundColor: '#CBD5E1',
   },
-  liveDotActive: {
-    backgroundColor: '#22C55E',
-  },
+  liveDotActive: { backgroundColor: '#22C55E' },
   liveText: {
     fontFamily: FONT.sans,
     fontSize: 10,
@@ -173,12 +141,8 @@ export const styles = StyleSheet.create({
     color: COLOR.inkFaint,
     letterSpacing: 0.8,
   },
-  liveTextActive: {
-    color: '#16A34A',
-  },
-  viewfinderWrap: {
-    marginBottom: 14,
-  },
+  liveTextActive: { color: '#16A34A' },
+  viewfinderWrap: { marginBottom: 14 },
   viewfinder: {
     height: 200,
     borderRadius: RADIUS.lg,
@@ -196,38 +160,11 @@ export const styles = StyleSheet.create({
     borderColor: COLOR.tealLight,
     borderWidth: 2,
   },
-  cornerTL: {
-    top: 14,
-    left: 14,
-    borderRightWidth: 0,
-    borderBottomWidth: 0,
-    borderTopLeftRadius: 4,
-  },
-  cornerTR: {
-    top: 14,
-    right: 14,
-    borderLeftWidth: 0,
-    borderBottomWidth: 0,
-    borderTopRightRadius: 4,
-  },
-  cornerBL: {
-    bottom: 14,
-    left: 14,
-    borderRightWidth: 0,
-    borderTopWidth: 0,
-    borderBottomLeftRadius: 4,
-  },
-  cornerBR: {
-    bottom: 14,
-    right: 14,
-    borderLeftWidth: 0,
-    borderTopWidth: 0,
-    borderBottomRightRadius: 4,
-  },
-  viewfinderCenter: {
-    alignItems: 'center',
-    gap: 10,
-  },
+  cornerTL: { top: 14, left: 14,  borderRightWidth: 0,  borderBottomWidth: 0, borderTopLeftRadius: 4 },
+  cornerTR: { top: 14, right: 14, borderLeftWidth: 0,   borderBottomWidth: 0, borderTopRightRadius: 4 },
+  cornerBL: { bottom: 14, left: 14,  borderRightWidth: 0, borderTopWidth: 0, borderBottomLeftRadius: 4 },
+  cornerBR: { bottom: 14, right: 14, borderLeftWidth: 0,  borderTopWidth: 0, borderBottomRightRadius: 4 },
+  viewfinderCenter: { alignItems: 'center', gap: 10 },
   viewfinderHint: {
     fontFamily: FONT.sans,
     fontSize: 12,
@@ -295,9 +232,9 @@ export const styles = StyleSheet.create({
     borderWidth: 1.5,
     borderColor: '#FECACA',
   },
-  stopBtnText: {
-    color: '#EF4444',
-  },
+  stopBtnText: { color: '#EF4444' },
+
+  // ── Section Label ─────────────────────────────────────────────────────────────
   sectionLabel: {
     fontFamily: FONT.sans,
     fontSize: 10,
@@ -305,9 +242,148 @@ export const styles = StyleSheet.create({
     color: COLOR.inkFaint,
     letterSpacing: 1.2,
     textTransform: 'uppercase',
-    marginBottom: 12,
-    marginTop: 4,
+    marginBottom: 10,
   },
+
+  // ── Phrasebook Card ───────────────────────────────────────────────────────────
+  phrasebookCard: {
+    backgroundColor: COLOR.bgCard,
+    borderRadius: RADIUS.xl,
+    borderWidth: 1,
+    borderColor: COLOR.borderCard,
+    flexDirection: 'row',
+    overflow: 'hidden',
+    shadowColor: COLOR.tealDeep,
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.07,
+    shadowRadius: 14,
+    elevation: 3,
+  },
+  phrasebookCardBody: {
+    flex: 1,
+    padding: 18,
+  },
+  phrasebookCardTop: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    marginBottom: 12,
+  },
+  phrasebookIconWrap: {
+    width: 38,
+    height: 38,
+    borderRadius: RADIUS.sm,
+    backgroundColor: COLOR.tealGlow,
+    borderWidth: 1,
+    borderColor: 'rgba(10,155,170,0.18)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  phrasebookFslBadge: {
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: RADIUS.pill,
+    backgroundColor: 'rgba(10,155,170,0.08)',
+    borderWidth: 1,
+    borderColor: 'rgba(10,155,170,0.18)',
+  },
+  phrasebookFslBadgeText: {
+    fontFamily: FONT.sans,
+    fontSize: 10,
+    fontWeight: '700',
+    color: COLOR.tealBright,
+    letterSpacing: 0.8,
+  },
+  phrasebookCardTitle: {
+    fontFamily: FONT.serif,
+    fontSize: 17,
+    color: COLOR.inkPrimary,
+    letterSpacing: -0.2,
+    marginBottom: 4,
+  },
+  phrasebookCardSub: {
+    fontFamily: FONT.sans,
+    fontSize: 12,
+    color: COLOR.inkFaint,
+    lineHeight: 17,
+    marginBottom: 14,
+  },
+  phrasebookChipsRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 6,
+    marginBottom: 14,
+  },
+  phrasebookChip: {
+    paddingHorizontal: 9,
+    paddingVertical: 4,
+    borderRadius: RADIUS.pill,
+    backgroundColor: COLOR.bgPage,
+    borderWidth: 1,
+    borderColor: COLOR.borderCard,
+  },
+  phrasebookChipText: {
+    fontFamily: FONT.sans,
+    fontSize: 10,
+    fontWeight: '600',
+    color: COLOR.inkMuted,
+    letterSpacing: 0.3,
+  },
+  phrasebookChipMore: {
+    paddingHorizontal: 9,
+    paddingVertical: 4,
+    borderRadius: RADIUS.pill,
+    backgroundColor: COLOR.tealGlow,
+    borderWidth: 1,
+    borderColor: 'rgba(10,155,170,0.18)',
+  },
+  phrasebookChipMoreText: {
+    fontFamily: FONT.sans,
+    fontSize: 10,
+    fontWeight: '700',
+    color: COLOR.tealBright,
+    letterSpacing: 0.2,
+  },
+  phrasebookOpenRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+  },
+  phrasebookOpenText: {
+    fontFamily: FONT.sans,
+    fontSize: 12,
+    fontWeight: '700',
+    color: COLOR.tealBright,
+    letterSpacing: 0.2,
+  },
+
+  // Decorative right panel
+  phrasebookCardDeco: {
+    width: 72,
+    backgroundColor: 'rgba(10,155,170,0.04)',
+    borderLeftWidth: 1,
+    borderLeftColor: COLOR.borderCard,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  decoCircleOuter: {
+    width: 52,
+    height: 52,
+    borderRadius: 26,
+    backgroundColor: 'rgba(10,155,170,0.07)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  decoCircleInner: {
+    width: 38,
+    height: 38,
+    borderRadius: 19,
+    backgroundColor: 'rgba(10,155,170,0.10)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+
+  // ── Quick Actions ─────────────────────────────────────────────────────────────
   quickGrid: {
     flexDirection: 'row',
     flexWrap: 'wrap',
@@ -320,11 +396,11 @@ export const styles = StyleSheet.create({
     borderRadius: RADIUS.md,
     borderWidth: 1,
     borderColor: COLOR.borderCard,
-    paddingHorizontal: 16,
+    paddingHorizontal: 14,
     paddingVertical: 14,
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 12,
+    gap: 10,
     shadowColor: COLOR.tealDeep,
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.05,
@@ -346,9 +422,16 @@ export const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '600',
     color: COLOR.inkPrimary,
-    flex: 1,
     lineHeight: 16,
   },
+  quickSublabel: {
+    fontFamily: FONT.sans,
+    fontSize: 10,
+    color: COLOR.inkFaint,
+    marginTop: 2,
+  },
+
+  // ── Misc (kept for RecentRow compatibility) ───────────────────────────────────
   card: {
     backgroundColor: COLOR.bgCard,
     borderRadius: RADIUS.lg,

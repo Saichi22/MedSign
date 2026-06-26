@@ -302,7 +302,7 @@ export default function TranslatorScreen() {
           <>
             <Text style={styles.sectionLabelSpaced}>RECENT SIGNS</Text>
             <View style={styles.card}>
-              {history.map((h, i) => (
+              {history.slice(0, 2).map((h, i, arr) => (
                 <View
                   key={i}
                   style={[
@@ -314,7 +314,7 @@ export default function TranslatorScreen() {
                   {/* Icon differs for word/phrase signs vs alphabet signs */}
                   <View style={[styles.historyIconWrap, h.isMedical && styles.historyIconMedical]}>
                     <MaterialCommunityIcons
-                      name={h.isMedical ? 'medical-bag' : 'sign-language'}
+                      name={h.isMedical ? 'medical-bag' : 'hand-wave'}
                       size={15}
                       color={h.isMedical ? COLOR.amber : COLOR.tealBright}
                     />
