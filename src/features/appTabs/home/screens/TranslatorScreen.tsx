@@ -31,6 +31,7 @@ import {
   Easing,
   LayoutAnimation,
   Platform,
+  ScrollView,
   StatusBar,
   StyleSheet,
   Text,
@@ -46,6 +47,10 @@ import {
 import { useTensorflowModel } from 'react-native-fast-tflite';
 import RNFS from 'react-native-fs';
 import { Images } from 'react-native-nitro-image';
+import MaterialCommunityIcons from 'react-native-vector-icons/MaterialCommunityIcons';
+
+import { COLOR } from '../../../../styles/colors/theme';
+import { styles } from '../../../../styles/colors/TranslatorScreenStyle';
 
 // ─── Enable LayoutAnimation on Android ───────────────────────────────────────
 if (Platform.OS === 'android') {
@@ -74,16 +79,14 @@ const INPUT_SIZE      = 640;
 
 interface SignDetection { label: string; confidence: number; }
 
-// ─── Center-crop to square then resize to INPUT_SIZE×INPUT_SIZE float32 ──────
-// Stretching a portrait photo distorts the hand shape. Center-cropping first
-// keeps the hand centered (where the model was trained to look) and undistorted.
+// ─── Center-crop + horizontal flip + resize to INPUT_SIZE×INPUT_SIZE float32 ──
 function resizeToFloat32(
   pixels: Uint8Array,
   srcW: number,
   srcH: number,
   channels: 3 | 4,
+  mirror: boolean = false,
 ): Float32Array {
-  // 1. Center-crop to the largest square that fits
   const cropSize = Math.min(srcW, srcH);
   const cropX0   = Math.floor((srcW - cropSize) / 2);
   const cropY0   = Math.floor((srcH - cropSize) / 2);
@@ -93,7 +96,8 @@ function resizeToFloat32(
 
   for (let y = 0; y < INPUT_SIZE; y++) {
     for (let x = 0; x < INPUT_SIZE; x++) {
-      const srcX   = Math.min(Math.floor(x * scale) + cropX0, srcW - 1);
+      const srcXBase = mirror ? (INPUT_SIZE - 1 - x) : x;
+      const srcX   = Math.min(Math.floor(srcXBase * scale) + cropX0, srcW - 1);
       const srcY   = Math.min(Math.floor(y * scale) + cropY0, srcH - 1);
       const srcIdx = (srcY * srcW + srcX) * channels;
       const dstIdx = (y * INPUT_SIZE + x) * 3;
@@ -138,7 +142,6 @@ export default function SignTranslatorScreen() {
   const cameraRef      = useRef<Camera>(null);
   const loopRef        = useRef<ReturnType<typeof setTimeout> | null>(null);
   const busyRef        = useRef(false);
-  // Smoothing buffer: track last N winning classes
   const historyRef     = useRef<number[]>([]);
   const HISTORY_SIZE   = CONFIRM_FRAMES;
 
@@ -194,7 +197,7 @@ export default function SignTranslatorScreen() {
       console.log(`[SignTranslator] image ${srcW}×${srcH}, buffer=${srcPixels.length}, channels=${inferredChannels}`);
 
       // 3. Resize → 640×640 float32 [0–1]
-      const float32Input = resizeToFloat32(srcPixels, srcW, srcH, inferredChannels);
+      const float32Input = resizeToFloat32(srcPixels, srcW, srcH, inferredChannels, true);
 
       // 4. Run TFLite inference
       if (!model.model) return;
@@ -218,11 +221,9 @@ export default function SignTranslatorScreen() {
       const history = historyRef.current;
 
       if (result) {
-        // Push winning class into history, keep last HISTORY_SIZE only
         history.push(result.classIdx);
         if (history.length > HISTORY_SIZE) history.shift();
 
-        // Only confirm if all recent frames agree on the same class
         const allSame = history.length === HISTORY_SIZE &&
           history.every(c => c === history[0]);
 
@@ -233,9 +234,7 @@ export default function SignTranslatorScreen() {
           });
           setNoSignSeen(false);
         }
-        // else: keep showing previous confirmed detection while building consensus
       } else {
-        // No confident detection — clear history and reset
         historyRef.current = [];
         setDetection(null);
         setNoSignSeen(true);
@@ -277,137 +276,151 @@ export default function SignTranslatorScreen() {
     });
   }, []);
 
-  // ── Render ─────────────────────────────────────────────────────────────────
+  // ── Permission guard ───────────────────────────────────────────────────────
   if (!hasPermission) {
     return (
-      <View style={styles.center}>
-        <Text style={styles.permissionText}>Camera permission required.</Text>
-        <TouchableOpacity style={styles.permBtn} onPress={requestPermission}>
-          <Text style={styles.permBtnText}>Grant Permission</Text>
+      <View style={styles.centeredFill}>
+        <View style={styles.emptyIconWrap}>
+          <MaterialCommunityIcons name="camera-off" size={28} color={COLOR.tealBright} />
+        </View>
+        <Text style={styles.emptyTitle}>Camera Access Needed</Text>
+        <Text style={styles.emptyBody}>
+          Sign detection requires access to your camera to read hand gestures in real time.
+        </Text>
+        <TouchableOpacity style={styles.primaryBtn} onPress={requestPermission}>
+          <Text style={styles.primaryBtnText}>Grant Permission</Text>
         </TouchableOpacity>
       </View>
     );
   }
+
+  // ── Device guard ───────────────────────────────────────────────────────────
   if (!device) {
     return (
-      <View style={styles.center}>
-        <Text style={styles.permissionText}>No front camera found.</Text>
+      <View style={styles.centeredFill}>
+        <View style={styles.emptyIconWrap}>
+          <MaterialCommunityIcons name="camera-off" size={28} color={COLOR.tealBright} />
+        </View>
+        <Text style={styles.emptyTitle}>No Camera Found</Text>
+        <Text style={styles.emptyBody}>A front-facing camera is required for sign detection.</Text>
       </View>
     );
   }
 
-  const buttonLabel = !isModelReady ? 'Loading Model…'
-    : isDetecting ? 'Stop Detection' : 'Start Detection';
-
+  // ── Render ─────────────────────────────────────────────────────────────────
   return (
-    <View style={styles.container}>
-      <StatusBar translucent backgroundColor="transparent" barStyle="light-content" />
+    <View style={styles.root}>
+      <StatusBar barStyle="light-content" backgroundColor={COLOR.tealDeep} />
 
-      <Camera
-        ref={cameraRef}
-        style={StyleSheet.absoluteFill}
-        device={device}
-        isActive={true}
-        photo={true}
-        pixelFormat="yuv"
-      />
+      {/* ── Header ── */}
+      <View style={styles.header}>
+        <View style={styles.headerBlob} />
+        <View style={styles.headerTop}>
+          <View>
+            <Text style={styles.headerEyebrow}>Live Detection</Text>
+            <Text style={styles.headerTitle}>Sign Translator</Text>
+          </View>
+          {/* Live/Idle status badge — turns active (green) when the session is running */}
+          <View style={[styles.liveBadge, isDetecting && styles.liveBadgeActive]}>
+            <View style={[styles.liveDot, isDetecting && styles.liveDotActive]} />
+            <Text style={[styles.liveText, isDetecting && styles.liveTextActive]}>
+              {isDetecting ? 'LIVE' : 'IDLE'}
+            </Text>
+          </View>
+        </View>
+      </View>
 
-      <View style={styles.topOverlay}>
-        <Text style={styles.title}>Sign Translator</Text>
-        {model.state === 'loading' && (
-          <View style={styles.loadingRow}>
-            <ActivityIndicator size="small" color="#A78BFA" />
-            <Text style={styles.loadingText}>Loading model…</Text>
+      <ScrollView
+        style={{ flex: 1 }}
+        contentContainerStyle={styles.scrollContent}
+        showsVerticalScrollIndicator={false}
+      >
+        {/* ── Model loading / error banner ── */}
+        {!isModelReady && (
+          <View style={[styles.bannerCard, model.state === 'error' && styles.bannerCardError]}>
+            <MaterialCommunityIcons
+              name={model.state === 'error' ? 'alert-circle-outline' : 'clock-outline'}
+              size={16}
+              color={model.state === 'error' ? COLOR.red : COLOR.amber}
+            />
+            <Text style={[styles.bannerText, model.state === 'error' && styles.bannerTextError]}>
+              {model.state === 'error'
+                ? 'Model configuration runtime asset missing'
+                : 'Loading detection model…'}
+            </Text>
           </View>
         )}
-        {model.state === 'error' && (
-          <Text style={styles.errorText}>
-            ⚠ Model failed to load.{'\n'}Put besta_float16.tflite in{'\n'}android/app/src/main/assets/
-          </Text>
-        )}
-      </View>
 
-      {isDetecting && (
-        <View style={styles.resultArea} pointerEvents="none">
-          {detection ? (
-            <Animated.View style={[styles.resultCard, { opacity: cardOpacity, transform: [{ scale: cardScale }] }]}>
-              <Text style={styles.signEmoji}>🤟</Text>
-              <Text style={styles.signLabel}>{detection.label}</Text>
-              <View style={styles.confidenceRow}>
-                <View style={[styles.confidenceBar, { width: `${Math.round(detection.confidence * 100)}%` }]} />
+        {/* ── Camera viewfinder ── */}
+        <View style={styles.card}>
+          <View style={styles.cardHeader}>
+            <View style={styles.cardTitleRow}>
+              <View style={styles.cardIconWrap}>
+                <MaterialCommunityIcons name="camera" size={18} color={COLOR.tealBright} />
               </View>
-              <Text style={styles.confidenceText}>{Math.round(detection.confidence * 100)}% confidence</Text>
-            </Animated.View>
-          ) : (
-            <View style={styles.noSignCard}>
-              <Text style={styles.noSignText}>{'👋  No sign detected'}</Text>
+              <View>
+                <Text style={styles.cardTitle}>Camera Feed</Text>
+                <Text style={styles.cardSub}>Point at signing hands</Text>
+              </View>
             </View>
-          )}
-        </View>
-      )}
+          </View>
 
-      <View style={styles.bottomBar}>
+          <View style={styles.viewfinderWrap}>
+            <Camera
+              ref={cameraRef}
+              style={StyleSheet.absoluteFill}
+              device={device}
+              isActive={true}
+              photo={true}
+              pixelFormat="yuv"
+            />
+            {/* Decorative corner brackets drawn over the viewfinder */}
+            <View style={[styles.corner, styles.cornerTL]} pointerEvents="none" />
+            <View style={[styles.corner, styles.cornerTR]} pointerEvents="none" />
+            <View style={[styles.corner, styles.cornerBL]} pointerEvents="none" />
+            <View style={[styles.corner, styles.cornerBR]} pointerEvents="none" />
+          </View>
+        </View>
+
+        {/* ── Current prediction card ── */}
+        {detection ? (
+          <Animated.View
+            style={[styles.card, { opacity: cardOpacity, transform: [{ scale: cardScale }] }]}
+          >
+            <Text style={styles.sectionLabel}>CURRENT SIGN</Text>
+            <Text style={styles.predictionLabel}>{detection.label}</Text>
+            <View style={styles.predictionMeta}>
+              <Text style={styles.predictionConf}>
+                {Math.round(detection.confidence * 100)}% confidence
+              </Text>
+            </View>
+          </Animated.View>
+        ) : (
+          <View style={styles.outputBox}>
+            <Text style={styles.sectionLabel}>TRANSLATION OUTPUT</Text>
+            <Text style={styles.outputTextMuted}>
+              {isDetecting ? 'Listening for signs…' : 'Start a session to see translations'}
+            </Text>
+          </View>
+        )}
+
+        {/* ── Start / Stop button ── */}
         <TouchableOpacity
-          style={[styles.button, isDetecting && styles.buttonActive, !isModelReady && styles.buttonDisabled]}
+          style={[styles.primaryBtn, isDetecting && styles.stopBtn]}
           onPress={toggleDetection}
           disabled={!isModelReady}
-          activeOpacity={0.8}
+          activeOpacity={0.85}
         >
-          {model.state === 'loading'
-            ? <ActivityIndicator color="#fff" />
-            : <Text style={styles.buttonText}>{buttonLabel}</Text>}
+          <MaterialCommunityIcons
+            name={isDetecting ? 'stop-circle-outline' : 'camera-outline'}
+            size={20}
+            color={isDetecting ? COLOR.red : COLOR.tealDeep}
+          />
+          <Text style={[styles.primaryBtnText, isDetecting && styles.stopBtnText]}>
+            {isDetecting ? 'Stop Session' : isModelReady ? 'Start Translation' : 'Loading model…'}
+          </Text>
         </TouchableOpacity>
-        {isDetecting && <Text style={styles.hint}>Hold a sign clearly in frame</Text>}
-      </View>
+      </ScrollView>
     </View>
   );
 }
-
-// ─── Styles ───────────────────────────────────────────────────────────────────
-const PURPLE       = '#7C3AED';
-const PURPLE_LIGHT = '#A78BFA';
-const STOP_RED     = '#DC2626';
-
-const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#000' },
-  center: { flex: 1, backgroundColor: '#111', alignItems: 'center', justifyContent: 'center', padding: 24 },
-  permissionText: { color: '#ccc', fontSize: 16, textAlign: 'center', marginBottom: 20 },
-  permBtn: { backgroundColor: PURPLE, paddingHorizontal: 24, paddingVertical: 12, borderRadius: 12 },
-  permBtnText: { color: '#fff', fontSize: 15, fontWeight: '600' },
-  topOverlay: {
-    position: 'absolute', top: 0, left: 0, right: 0,
-    paddingTop: 52, paddingBottom: 20, paddingHorizontal: 20,
-    backgroundColor: 'rgba(0,0,0,0.55)', alignItems: 'center',
-  },
-  title: { color: '#fff', fontSize: 22, fontWeight: '700', letterSpacing: 0.5 },
-  loadingRow: { flexDirection: 'row', alignItems: 'center', marginTop: 8, gap: 8 },
-  loadingText: { color: PURPLE_LIGHT, fontSize: 13 },
-  errorText: { color: '#FCA5A5', fontSize: 12, textAlign: 'center', marginTop: 8, lineHeight: 18 },
-  resultArea: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, alignItems: 'center', justifyContent: 'center' },
-  resultCard: {
-    backgroundColor: 'rgba(15,10,30,0.88)', borderRadius: 24, padding: 28, alignItems: 'center', minWidth: 220,
-    borderWidth: 1, borderColor: 'rgba(124,58,237,0.5)',
-    shadowColor: PURPLE, shadowOpacity: 0.6, shadowRadius: 20, elevation: 12,
-  },
-  signEmoji: { fontSize: 48, marginBottom: 8 },
-  signLabel: { color: '#fff', fontSize: 42, fontWeight: '800', letterSpacing: 1, marginBottom: 14 },
-  confidenceRow: { width: '100%', height: 6, backgroundColor: 'rgba(255,255,255,0.12)', borderRadius: 3, overflow: 'hidden', marginBottom: 6 },
-  confidenceBar: { height: '100%', backgroundColor: PURPLE_LIGHT, borderRadius: 3 },
-  confidenceText: { color: PURPLE_LIGHT, fontSize: 13, fontWeight: '500' },
-  noSignCard: { backgroundColor: 'rgba(0,0,0,0.55)', borderRadius: 16, paddingHorizontal: 24, paddingVertical: 14 },
-  noSignText: { color: 'rgba(255,255,255,0.65)', fontSize: 15 },
-  bottomBar: {
-    position: 'absolute', bottom: 0, left: 0, right: 0,
-    paddingBottom: 40, paddingHorizontal: 32, paddingTop: 20,
-    backgroundColor: 'rgba(0,0,0,0.6)', alignItems: 'center', gap: 10,
-  },
-  button: {
-    backgroundColor: PURPLE, borderRadius: 40, paddingVertical: 16, paddingHorizontal: 48,
-    alignItems: 'center', justifyContent: 'center', minWidth: 220,
-    shadowColor: PURPLE, shadowOpacity: 0.5, shadowRadius: 12, elevation: 8,
-  },
-  buttonActive: { backgroundColor: STOP_RED, shadowColor: STOP_RED },
-  buttonDisabled: { backgroundColor: '#4B5563', shadowOpacity: 0, elevation: 0 },
-  buttonText: { color: '#fff', fontSize: 16, fontWeight: '700', letterSpacing: 0.5 },
-  hint: { color: 'rgba(255,255,255,0.45)', fontSize: 12, textAlign: 'center' },
-});
