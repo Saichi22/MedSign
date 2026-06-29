@@ -125,27 +125,61 @@ const INPUT_SIZE      = 640;
 
 interface SignDetection { label: string; confidence: number; }
 
-// ─── Center-crop + horizontal flip + resize to INPUT_SIZE×INPUT_SIZE float32 ──
+// ─── Map VisionCamera orientation string → degrees needed to correct it ───────
+const ROTATION_MAP: Record<string, 0 | 90 | 180 | 270> = {
+  'portrait':             0,
+  'landscape-left':       90,   // Samsung front cam typical case
+  'landscape-right':      270,
+  'portrait-upside-down': 180,
+};
+
+// ─── Center-crop + rotation correction + resize to INPUT_SIZE×INPUT_SIZE ──────
+// rotationDeg = how many degrees the raw buffer is rotated AWAY from portrait.
+// At 0° we also apply a horizontal mirror for front cameras (POCO behaviour).
+// At 90°/270° the rotation math inherently corrects Samsung's flipped output.
 function resizeToFloat32(
   pixels: Uint8Array,
   srcW: number,
   srcH: number,
   channels: 3 | 4,
-  mirror: boolean = false,
+  rotationDeg: 0 | 90 | 180 | 270 = 0,
 ): Float32Array {
-  const cropSize = Math.min(srcW, srcH);
-  const cropX0   = Math.floor((srcW - cropSize) / 2);
-  const cropY0   = Math.floor((srcH - cropSize) / 2);
+  // After correcting rotation, logical dimensions may be swapped
+  const logW = (rotationDeg === 90 || rotationDeg === 270) ? srcH : srcW;
+  const logH = (rotationDeg === 90 || rotationDeg === 270) ? srcW : srcH;
+
+  const cropSize = Math.min(logW, logH);
+  const cropX0   = Math.floor((logW - cropSize) / 2);
+  const cropY0   = Math.floor((logH - cropSize) / 2);
   const scale    = cropSize / INPUT_SIZE;
 
   const out = new Float32Array(INPUT_SIZE * INPUT_SIZE * 3);
 
   for (let y = 0; y < INPUT_SIZE; y++) {
     for (let x = 0; x < INPUT_SIZE; x++) {
-      const srcXBase = mirror ? (INPUT_SIZE - 1 - x) : x;
-      const srcX   = Math.min(Math.floor(srcXBase * scale) + cropX0, srcW - 1);
-      const srcY   = Math.min(Math.floor(y * scale) + cropY0, srcH - 1);
-      const srcIdx = (srcY * srcW + srcX) * channels;
+      // Logical pixel in the correctly-oriented (portrait) frame
+      const lx = Math.min(Math.floor(x * scale) + cropX0, logW - 1);
+      const ly = Math.min(Math.floor(y * scale) + cropY0, logH - 1);
+
+      // Map logical → physical coords in the raw buffer
+      let px: number, py: number;
+      if (rotationDeg === 90) {
+        // Raw buffer is rotated 90° CW relative to portrait → undo
+        px = srcW - 1 - ly;
+        py = lx;
+      } else if (rotationDeg === 270) {
+        px = ly;
+        py = srcH - 1 - lx;
+      } else if (rotationDeg === 180) {
+        px = srcW - 1 - lx;
+        py = srcH - 1 - ly;
+      } else {
+        // 0° — apply horizontal flip for front camera (POCO / default behaviour)
+        px = srcW - 1 - lx;
+        py = ly;
+      }
+
+      const srcIdx = (py * srcW + px) * channels;
       const dstIdx = (y * INPUT_SIZE + x) * 3;
       out[dstIdx]     = pixels[srcIdx]     / 255;
       out[dstIdx + 1] = pixels[srcIdx + 1] / 255;
@@ -201,6 +235,11 @@ export default function SignTranslatorScreen() {
   const model        = useTensorflowModel(require('../../../../assets/besta_float16.tflite'), []);
   const isModelReady = model.state === 'loaded';
 
+  // ── Log model state on mount/change for easier debugging ──────────────────
+  useEffect(() => {
+    console.log('[SignTranslator] model state:', model.state, (model as any).error ?? '');
+  }, [model.state]);
+
   // ── Animate detection card ─────────────────────────────────────────────────
   useEffect(() => {
     if (detection) {
@@ -231,12 +270,19 @@ export default function SignTranslatorScreen() {
       const photo = await cameraRef.current.takePhoto({ flash: 'off' });
       const filePath = photo.path.startsWith('file://') ? photo.path : `file://${photo.path}`;
 
-      // 2. Decode JPEG → raw pixel buffer via nitro-image
+      // 2. Determine rotation needed to correct the raw pixel orientation.
+      //    VisionCamera stores the correct presentation orientation in photo.orientation.
+      //    Samsung devices typically report 'landscape-left' for front-cam portrait shots.
+      const rotationDeg: 0 | 90 | 180 | 270 =
+        ROTATION_MAP[(photo as any).orientation ?? 'portrait'] ?? 0;
+      console.log(`[SignTranslator] photo.orientation=${(photo as any).orientation}, rotationDeg=${rotationDeg}`);
+
+      // 3. Decode JPEG → raw pixel buffer via nitro-image
       const image = await Images.loadFromFileAsync(filePath);
       const rawPixelData = await image.toRawPixelData();
       const srcW = image.width;
       const srcH = image.height;
-      await RNFS.unlink(photo.path).catch(() => {});
+      await RNFS.unlink(photo.path).catch(e => console.warn('[SignTranslator] unlink failed:', e));
 
       const srcPixels = new Uint8Array(rawPixelData.buffer);
 
@@ -245,15 +291,15 @@ export default function SignTranslatorScreen() {
       const inferredChannels = Math.round(srcPixels.length / totalPixels) as 3 | 4;
       console.log(`[SignTranslator] image ${srcW}×${srcH}, buffer=${srcPixels.length}, channels=${inferredChannels}`);
 
-      // 3. Resize → 640×640 float32 [0–1], mirrored for front camera
-      const float32Input = resizeToFloat32(srcPixels, srcW, srcH, inferredChannels, true);
+      // 4. Resize → 640×640 float32 [0–1], with rotation + mirror correction
+      const float32Input = resizeToFloat32(srcPixels, srcW, srcH, inferredChannels, rotationDeg);
 
-      // 4. Run TFLite inference
+      // 5. Run TFLite inference
       if (!model.model) return;
       const outputs = model.model.runSync([float32Input.buffer as ArrayBuffer]);
       const output  = new Float32Array(outputs[0]);
 
-      // 5. Debug: log output tensor size + global max score
+      // 6. Debug: log output tensor size + global max score
       // Expected output.length = 62 × 8400 = 520,800
       let globalMax = 0;
       let globalMaxClass = -1;
@@ -269,7 +315,7 @@ export default function SignTranslatorScreen() {
         ` globalMax=${globalMax.toFixed(4)} class=${globalMaxClass} pred=${globalMaxPred} threshold=${CONF_THRESHOLD}`
       );
 
-      // 6. YOLOv8 post-processing with temporal smoothing
+      // 7. YOLOv8 post-processing with temporal smoothing
       const result = findBestDetection(output);
       const history = historyRef.current;
 
