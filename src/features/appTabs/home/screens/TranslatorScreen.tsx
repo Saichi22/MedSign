@@ -120,7 +120,7 @@ const NUM_CLASSES     = 58;   // updated: 62 output rows − 4 box coords = 58
 const NUM_PREDICTIONS = 8400;
 const CONF_THRESHOLD  = 0.40;
 const THROTTLE_MS     = 400;
-const CONFIRM_FRAMES  = 3;
+const CONFIRM_FRAMES  = 1;
 const INPUT_SIZE      = 640;
 
 interface SignDetection { label: string; confidence: number; }
@@ -393,7 +393,6 @@ export default function SignTranslatorScreen() {
             <MaterialCommunityIcons
               name={model.state === 'error' ? 'alert-circle-outline' : 'clock-outline'}
               size={16}
-              color={model.state === 'error' ? COLOR.red : COLOR.amber}
             />
             <Text style={[styles.bannerText, model.state === 'error' && styles.bannerTextError]}>
               {model.state === 'error'
@@ -465,7 +464,6 @@ export default function SignTranslatorScreen() {
           <MaterialCommunityIcons
             name={isDetecting ? 'stop-circle-outline' : 'camera-outline'}
             size={20}
-            color={isDetecting ? COLOR.red : COLOR.tealDeep}
           />
           <Text style={[styles.primaryBtnText, isDetecting && styles.stopBtnText]}>
             {isDetecting ? 'Stop Session' : isModelReady ? 'Start Translation' : 'Loading model…'}
