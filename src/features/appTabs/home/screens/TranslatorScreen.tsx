@@ -3,14 +3,8 @@
  *
  * Sign language translation — JS-thread inference approach.
  *
- * Instead of a frame processor worklet (which causes HybridObject NativeState
- * issues with fast-tflite v3), we:
- *   1. Take a photo snapshot every THROTTLE_MS via camera.takePhoto()
- *   2. Read it as a raw pixel buffer with react-native-fs
- *   3. Run TFLite inference synchronously on the JS thread
- *
- * This is ~5× slower than a frame processor but fully reliable.
- * For a sign-language app running at 2–3 fps this is perfectly fine.
+ * Updated for best__6__float16.tflite
+ *   Output tensor: [1, 62, 8400]  →  4 box coords + 58 classes
  *
  * Dependencies:
  *   react-native-vision-camera    ^4.7.3
@@ -57,23 +51,75 @@ if (Platform.OS === 'android') {
   UIManager.setLayoutAnimationEnabledExperimental?.(true);
 }
 
-// ─── Class labels (48 total) ──────────────────────────────────────────────────
+// ─── Class labels (58 total — extracted directly from best__6_.pt) ───────────
+// Order matches the model's internal names dict (keys 0–57).
+// ─── Class labels (58 total — from best__6_.pt model.names, keys 0–57) ──────
 const SIGN_LABELS: string[] = [
-  'A','B','C','D','E','F','G','H','I','J',
-  'K','L','M','N','O','P','Q','R','S','T',
-  'U','V','W','X','Y','Z',
-  '0','1','2','3','4','5','6','7','8','9',
-  'Hello','Thank You','Please','Yes',
-  'No','Help','More','Stop',
-  'Good','Bad','Love','Goodbye',
+  'A',          // 0
+  'B',          // 1
+  'C',          // 2
+  'D',          // 3
+  'E',          // 4  ← was 'Eight' in old code (off-by-one from here)
+  'Eight',      // 5
+  'F',          // 6
+  'Family',     // 7
+  'Fine',       // 8
+  'Five',       // 9
+  'Four',       // 10
+  'G',          // 11
+  'H',          // 12
+  'Help',       // 13
+  'Home',       // 14
+  'Hungry',     // 15
+  'I',          // 16
+  'I_hate_you', // 17
+  'I_love_you', // 18
+  'K',          // 19  ← 'J' is at 46, not here
+  'L',          // 20
+  'M',          // 21
+  'N',          // 22
+  'Nine',       // 23
+  'No',         // 24
+  'O',          // 25
+  'Okay',       // 26
+  'One',        // 27
+  'P',          // 28
+  'Pray',       // 29
+  'Q',          // 30
+  'R',          // 31
+  'S',          // 32
+  'Seven',      // 33
+  'Six',        // 34
+  'Sorry',      // 35
+  'T',          // 36
+  'Three',      // 37
+  'Time',       // 38
+  'Two',        // 39
+  'U',          // 40
+  'V',          // 41
+  'W',          // 42
+  'X',          // 43
+  'Y',          // 44
+  'Zero',       // 45
+  'J',          // 46
+  'Z',          // 47
+  'LALAMUNAN',  // 48
+  'MAHIRAP',    // 49
+  'MASAKIT',    // 50
+  'NAGSUSUKA',  // 51
+  'NAGTATAE',   // 52
+  'NAHIHILO',   // 53
+  'NAIIHI',     // 54
+  'NAMAMANAS',  // 55
+  'NANGHIHINA', // 56
+  'TUMUTUSOK',  // 57
 ];
 
 // ─── Constants ────────────────────────────────────────────────────────────────
-const NUM_CLASSES     = 48;
+const NUM_CLASSES     = 58;   // updated: 62 output rows − 4 box coords = 58
 const NUM_PREDICTIONS = 8400;
-const CONF_THRESHOLD  = 0.40;  // slightly lower — model scores are reliable
+const CONF_THRESHOLD  = 0.40;
 const THROTTLE_MS     = 400;
-// Smoothing: a class must win this many consecutive frames before being shown
 const CONFIRM_FRAMES  = 3;
 const INPUT_SIZE      = 640;
 
@@ -109,7 +155,10 @@ function resizeToFloat32(
   return out;
 }
 
-// ─── Run YOLOv8 post-processing on the flat output buffer ────────────────────
+// ─── YOLOv8 post-processing on the flat output buffer ────────────────────────
+// Output layout: [62 × 8400] flattened row-major
+//   rows  0-3  → box coords (x, y, w, h) — skipped
+//   rows  4-61 → class scores for NUM_CLASSES classes
 function findBestDetection(
   output: Float32Array,
 ): { classIdx: number; score: number } | null {
@@ -148,11 +197,11 @@ export default function SignTranslatorScreen() {
   const cardOpacity = useRef(new Animated.Value(0)).current;
   const cardScale   = useRef(new Animated.Value(0.85)).current;
 
-  // ── TFLite model (JS-thread only — no worklet capture) ────────────────────
+  // ── TFLite model ───────────────────────────────────────────────────────────
   const model        = useTensorflowModel(require('../../../../assets/besta_float16.tflite'), []);
   const isModelReady = model.state === 'loaded';
 
-  // ── Animate card ───────────────────────────────────────────────────────────
+  // ── Animate detection card ─────────────────────────────────────────────────
   useEffect(() => {
     if (detection) {
       Animated.parallel([
@@ -191,12 +240,12 @@ export default function SignTranslatorScreen() {
 
       const srcPixels = new Uint8Array(rawPixelData.buffer);
 
-      // nitro-image on Android returns RGBA (4 bytes/pixel); detect channel count from buffer size.
+      // nitro-image on Android returns RGBA (4 bytes/pixel); detect channel count.
       const totalPixels = srcW * srcH;
       const inferredChannels = Math.round(srcPixels.length / totalPixels) as 3 | 4;
       console.log(`[SignTranslator] image ${srcW}×${srcH}, buffer=${srcPixels.length}, channels=${inferredChannels}`);
 
-      // 3. Resize → 640×640 float32 [0–1]
+      // 3. Resize → 640×640 float32 [0–1], mirrored for front camera
       const float32Input = resizeToFloat32(srcPixels, srcW, srcH, inferredChannels, true);
 
       // 4. Run TFLite inference
@@ -204,7 +253,8 @@ export default function SignTranslatorScreen() {
       const outputs = model.model.runSync([float32Input.buffer as ArrayBuffer]);
       const output  = new Float32Array(outputs[0]);
 
-      // 5. Debug: log output tensor size and max score across all predictions
+      // 5. Debug: log output tensor size + global max score
+      // Expected output.length = 62 × 8400 = 520,800
       let globalMax = 0;
       let globalMaxClass = -1;
       let globalMaxPred = -1;
@@ -214,7 +264,10 @@ export default function SignTranslatorScreen() {
           if (score > globalMax) { globalMax = score; globalMaxClass = c; globalMaxPred = j; }
         }
       }
-      console.log(`[SignTranslator] output len=${output.length}, globalMax=${globalMax.toFixed(4)} class=${globalMaxClass} pred=${globalMaxPred} threshold=${CONF_THRESHOLD}`);
+      console.log(
+        `[SignTranslator] output len=${output.length} (expected ${(NUM_CLASSES + 4) * NUM_PREDICTIONS}),` +
+        ` globalMax=${globalMax.toFixed(4)} class=${globalMaxClass} pred=${globalMaxPred} threshold=${CONF_THRESHOLD}`
+      );
 
       // 6. YOLOv8 post-processing with temporal smoothing
       const result = findBestDetection(output);
@@ -320,7 +373,6 @@ export default function SignTranslatorScreen() {
             <Text style={styles.headerEyebrow}>Live Detection</Text>
             <Text style={styles.headerTitle}>Sign Translator</Text>
           </View>
-          {/* Live/Idle status badge — turns active (green) when the session is running */}
           <View style={[styles.liveBadge, isDetecting && styles.liveBadgeActive]}>
             <View style={[styles.liveDot, isDetecting && styles.liveDotActive]} />
             <Text style={[styles.liveText, isDetecting && styles.liveTextActive]}>
@@ -345,7 +397,7 @@ export default function SignTranslatorScreen() {
             />
             <Text style={[styles.bannerText, model.state === 'error' && styles.bannerTextError]}>
               {model.state === 'error'
-                ? 'Model configuration runtime asset missing'
+                ? 'Model failed to load — check asset path'
                 : 'Loading detection model…'}
             </Text>
           </View>
@@ -374,7 +426,6 @@ export default function SignTranslatorScreen() {
               photo={true}
               pixelFormat="yuv"
             />
-            {/* Decorative corner brackets drawn over the viewfinder */}
             <View style={[styles.corner, styles.cornerTL]} pointerEvents="none" />
             <View style={[styles.corner, styles.cornerTR]} pointerEvents="none" />
             <View style={[styles.corner, styles.cornerBL]} pointerEvents="none" />
