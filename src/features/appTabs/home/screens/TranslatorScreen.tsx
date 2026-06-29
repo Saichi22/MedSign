@@ -125,6 +125,51 @@ const INPUT_SIZE      = 640;
 
 interface SignDetection { label: string; confidence: number; }
 
+// ─── Rotate pixel buffer CW by 0 / 90 / 180 / 270 degrees ───────────────────
+// Needed on Android (Samsung etc.) where the front camera buffer arrives
+// rotated 90° relative to what the user sees on screen.
+function rotatePixels(
+  pixels: Uint8Array,
+  srcW: number,
+  srcH: number,
+  channels: 3 | 4,
+  degrees: 0 | 90 | 180 | 270,
+): { data: Uint8Array; width: number; height: number } {
+  if (degrees === 0) return { data: pixels, width: srcW, height: srcH };
+
+  const dstW = degrees === 90 || degrees === 270 ? srcH : srcW;
+  const dstH = degrees === 90 || degrees === 270 ? srcW : srcH;
+  const out  = new Uint8Array(dstW * dstH * channels);
+
+  for (let y = 0; y < srcH; y++) {
+    for (let x = 0; x < srcW; x++) {
+      const srcIdx = (y * srcW + x) * channels;
+
+      let dstX: number, dstY: number;
+      if (degrees === 90) {
+        // CW 90°: (x, y) → (srcH-1-y, x)
+        dstX = srcH - 1 - y;
+        dstY = x;
+      } else if (degrees === 270) {
+        // CCW 90°: (x, y) → (y, srcW-1-x)
+        dstX = y;
+        dstY = srcW - 1 - x;
+      } else {
+        // 180°: (x, y) → (srcW-1-x, srcH-1-y)
+        dstX = srcW - 1 - x;
+        dstY = srcH - 1 - y;
+      }
+
+      const dstIdx = (dstY * dstW + dstX) * channels;
+      for (let c = 0; c < channels; c++) {
+        out[dstIdx + c] = pixels[srcIdx + c];
+      }
+    }
+  }
+
+  return { data: out, width: dstW, height: dstH };
+}
+
 // ─── Center-crop + horizontal flip + resize to INPUT_SIZE×INPUT_SIZE float32 ──
 function resizeToFloat32(
   pixels: Uint8Array,
@@ -245,15 +290,32 @@ export default function SignTranslatorScreen() {
       const inferredChannels = Math.round(srcPixels.length / totalPixels) as 3 | 4;
       console.log(`[SignTranslator] image ${srcW}×${srcH}, buffer=${srcPixels.length}, channels=${inferredChannels}`);
 
-      // 3. Resize → 640×640 float32 [0–1], mirrored for front camera
-      const float32Input = resizeToFloat32(srcPixels, srcW, srcH, inferredChannels, true);
+      // 3. Android rotation fix — front camera buffer often arrives 90° rotated.
+      //    photo.orientation reflects the EXIF tag written by the camera sensor.
+      //    We rotate the raw pixels to match the upright portrait view before
+      //    feeding the model, so inference sees the same orientation on all devices.
+let rotationDeg: 0 | 90 | 180 | 270 = 0;
+if (Platform.OS === 'android' && srcW > srcH) {
+  rotationDeg = 270;
+}
 
-      // 4. Run TFLite inference
+const rotated = rotatePixels(srcPixels, srcW, srcH, inferredChannels, rotationDeg);
+
+      // 4. Resize → 640×640 float32 [0–1], mirrored for front camera
+const float32Input = resizeToFloat32(
+  rotated.data,
+  rotated.width,
+  rotated.height,
+  inferredChannels,
+  true,
+);
+
+      // 5. Run TFLite inference
       if (!model.model) return;
       const outputs = model.model.runSync([float32Input.buffer as ArrayBuffer]);
       const output  = new Float32Array(outputs[0]);
 
-      // 5. Debug: log output tensor size + global max score
+      // 6. Debug: log output tensor size + global max score
       // Expected output.length = 62 × 8400 = 520,800
       let globalMax = 0;
       let globalMaxClass = -1;
@@ -269,7 +331,7 @@ export default function SignTranslatorScreen() {
         ` globalMax=${globalMax.toFixed(4)} class=${globalMaxClass} pred=${globalMaxPred} threshold=${CONF_THRESHOLD}`
       );
 
-      // 6. YOLOv8 post-processing with temporal smoothing
+      // 7. YOLOv8 post-processing with temporal smoothing
       const result = findBestDetection(output);
       const history = historyRef.current;
 
