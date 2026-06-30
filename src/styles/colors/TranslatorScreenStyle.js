@@ -1,12 +1,44 @@
 // TranslatorScreenStyle.js
 
 import { StyleSheet, Platform } from 'react-native';
-import { COLOR, FONT, RADIUS, WINDOW_WIDTH as W } from './theme'; 
+import { COLOR, FONT, RADIUS, WINDOW_WIDTH as W } from './theme';
 
 export const styles = StyleSheet.create({
   root: {
     flex: 1,
     backgroundColor: COLOR.bgPage,
+  },
+
+  // ── Decorative page background (layered soft blobs, sits behind ScrollView) ─
+  bgLayer: {
+    ...StyleSheet.absoluteFillObject,
+  },
+  bgBlobTopRight: {
+    position: 'absolute',
+    top: -W * 0.25,
+    right: -W * 0.3,
+    width: W * 0.9,
+    height: W * 0.9,
+    borderRadius: W * 0.45,
+    backgroundColor: 'rgba(10,155,170,0.07)',
+  },
+  bgBlobMidLeft: {
+    position: 'absolute',
+    top: W * 0.55,
+    left: -W * 0.35,
+    width: W * 0.75,
+    height: W * 0.75,
+    borderRadius: W * 0.375,
+    backgroundColor: 'rgba(217,119,6,0.045)',
+  },
+  bgBlobBottomRight: {
+    position: 'absolute',
+    bottom: -W * 0.3,
+    right: -W * 0.2,
+    width: W * 0.7,
+    height: W * 0.7,
+    borderRadius: W * 0.35,
+    backgroundColor: 'rgba(10,155,170,0.05)',
   },
 
   // ── Permission / empty states ─────────────────────────────────────────────
@@ -18,8 +50,8 @@ export const styles = StyleSheet.create({
     padding: 32,
   },
   emptyIconWrap: {
-    width: 60,
-    height: 60,
+    width: 64,
+    height: 64,
     borderRadius: RADIUS.md,
     backgroundColor: COLOR.tealGlow,
     borderWidth: 1,
@@ -49,11 +81,10 @@ export const styles = StyleSheet.create({
   header: {
     backgroundColor: COLOR.tealDeep,
     paddingTop: Platform.OS === 'ios' ? 60 : 44,
-    paddingBottom: 24,
+    paddingBottom: 18,
     paddingHorizontal: 24,
-    borderBottomLeftRadius: RADIUS.xl,
-    borderBottomRightRadius: RADIUS.xl,
     overflow: 'hidden',
+
   },
   headerBlob: {
     position: 'absolute',
@@ -63,6 +94,15 @@ export const styles = StyleSheet.create({
     height: W * 0.55,
     borderRadius: W * 0.275,
     backgroundColor: 'rgba(10,155,170,0.13)',
+  },
+  headerBlobSecondary: {
+    position: 'absolute',
+    bottom: -W * 0.25,
+    left: -W * 0.18,
+    width: W * 0.45,
+    height: W * 0.45,
+    borderRadius: W * 0.225,
+    backgroundColor: 'rgba(255,255,255,0.05)',
   },
   headerTop: {
     flexDirection: 'row',
@@ -78,10 +118,18 @@ export const styles = StyleSheet.create({
   },
   headerTitle: {
     fontFamily: FONT.serif,
-    fontSize: 26,
+    fontSize: 28,
     color: COLOR.white,
     letterSpacing: -0.4,
     marginTop: 2,
+  },
+  headerSub: {
+    fontFamily: FONT.sans,
+    fontSize: 12.5,
+    color: 'rgba(255,255,255,0.62)',
+    marginTop: 6,
+    maxWidth: '78%',
+    lineHeight: 17,
   },
 
   // ── Live badge ────────────────────────────────────────────────────────────
@@ -126,26 +174,61 @@ export const styles = StyleSheet.create({
     paddingHorizontal: 20,
     paddingTop: 24,
     paddingBottom: 48,
-    gap: 14,
+    gap: 16,
+  },
+
+  // ── Section heading (above groups of cards) ──────────────────────────────
+  sectionHeading: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginTop: 6,
+    marginBottom: -4,
+  },
+  sectionHeadingDash: {
+    width: 14,
+    height: 3,
+    borderRadius: 2,
+    backgroundColor: COLOR.tealLight,
+  },
+  sectionHeadingText: {
+    fontFamily: FONT.sans,
+    fontSize: 11,
+    fontWeight: '700',
+    color: COLOR.inkFaint,
+    letterSpacing: 1,
+    textTransform: 'uppercase',
   },
 
   // ── Banner ────────────────────────────────────────────────────────────────
   bannerCard: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 8,
+    gap: 10,
     backgroundColor: 'rgba(217,119,6,0.08)',
     borderRadius: RADIUS.md,
     borderWidth: 1,
     borderColor: 'rgba(217,119,6,0.20)',
     paddingHorizontal: 14,
-    paddingVertical: 10,
+    paddingVertical: 12,
   },
   bannerCardError: {
     backgroundColor: COLOR.redSurface,
     borderColor: COLOR.redBorder,
   },
+  bannerIconWrap: {
+    width: 28,
+    height: 28,
+    borderRadius: RADIUS.sm,
+    backgroundColor: 'rgba(217,119,6,0.14)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  bannerIconWrapError: {
+    backgroundColor: 'rgba(220,38,38,0.14)',
+  },
   bannerText: {
+    flex: 1,
     fontFamily: FONT.sans,
     fontSize: 13,
     fontWeight: '600',
@@ -163,10 +246,10 @@ export const styles = StyleSheet.create({
     borderColor: COLOR.borderCard,
     overflow: 'hidden',
     shadowColor: COLOR.tealDeep,
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.05,
-    shadowRadius: 8,
-    elevation: 2,
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.07,
+    shadowRadius: 12,
+    elevation: 3,
   },
   cardMedical: {
     borderColor: 'rgba(217,119,6,0.30)',
@@ -185,8 +268,8 @@ export const styles = StyleSheet.create({
     gap: 10,
   },
   cardIconWrap: {
-    width: 36,
-    height: 36,
+    width: 38,
+    height: 38,
     borderRadius: RADIUS.sm,
     backgroundColor: COLOR.tealGlow,
     borderWidth: 1,
@@ -207,9 +290,29 @@ export const styles = StyleSheet.create({
     marginTop: 1,
   },
 
+  // ── Status chip shown inside the camera card header (frames-detected, etc.) ─
+  cardHeaderChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    paddingHorizontal: 9,
+    paddingVertical: 4,
+    borderRadius: RADIUS.pill,
+    backgroundColor: COLOR.tealGlow,
+    borderWidth: 1,
+    borderColor: 'rgba(10,155,170,0.18)',
+  },
+  cardHeaderChipText: {
+    fontFamily: FONT.sans,
+    fontSize: 10,
+    fontWeight: '700',
+    color: COLOR.tealDeep,
+    letterSpacing: 0.3,
+  },
+
   // ── Viewfinder ────────────────────────────────────────────────────────────
   viewfinderWrap: {
-    height: 260,
+    height: 280,
     backgroundColor: '#0D2B2E',
     overflow: 'hidden',
     marginHorizontal: 0,
@@ -217,35 +320,72 @@ export const styles = StyleSheet.create({
     borderBottomRightRadius: RADIUS.lg,
     position: 'relative',
   },
+  scanlineOverlay: {
+    position: 'absolute',
+    left: 14,
+    right: 14,
+    top: 14,
+    bottom: 14,
+    borderRadius: RADIUS.md,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.06)',
+  },
   corner: {
     position: 'absolute',
-    width: 22,
-    height: 22,
+    width: 24,
+    height: 24,
     borderColor: COLOR.tealLight,
-    borderWidth: 2,
+    borderWidth: 2.5,
   },
   cornerTL: {
     top: 14, left: 14,
     borderRightWidth: 0, borderBottomWidth: 0,
-    borderTopLeftRadius: 4,
+    borderTopLeftRadius: 6,
   },
   cornerTR: {
     top: 14, right: 14,
     borderLeftWidth: 0, borderBottomWidth: 0,
-    borderTopRightRadius: 4,
+    borderTopRightRadius: 6,
   },
   cornerBL: {
     bottom: 14, left: 14,
     borderRightWidth: 0, borderTopWidth: 0,
-    borderBottomLeftRadius: 4,
+    borderBottomLeftRadius: 6,
   },
   cornerBR: {
     bottom: 14, right: 14,
     borderLeftWidth: 0, borderTopWidth: 0,
-    borderBottomRightRadius: 4,
+    borderBottomRightRadius: 6,
+  },
+  viewfinderHint: {
+    position: 'absolute',
+    bottom: 14,
+    left: 14,
+    right: 14,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    backgroundColor: 'rgba(0,0,0,0.45)',
+    borderRadius: RADIUS.pill,
+    paddingVertical: 6,
+  },
+  viewfinderHintText: {
+    fontFamily: FONT.sans,
+    fontSize: 11,
+    fontWeight: '600',
+    color: 'rgba(255,255,255,0.85)',
+    letterSpacing: 0.2,
   },
 
   // ── Prediction card ───────────────────────────────────────────────────────
+  predictionCardHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    paddingTop: 16,
+  },
   sectionLabel: {
     fontFamily: FONT.sans,
     fontSize: 9,
@@ -268,10 +408,11 @@ export const styles = StyleSheet.create({
   },
   predictionLabel: {
     fontFamily: FONT.serif,
-    fontSize: 40,
+    fontSize: 44,
     color: COLOR.inkPrimary,
     letterSpacing: -0.5,
     paddingHorizontal: 16,
+    paddingTop: 2,
     paddingBottom: 4,
   },
   predictionMeta: {
@@ -286,6 +427,18 @@ export const styles = StyleSheet.create({
     fontSize: 13,
     color: COLOR.inkFaint,
   },
+  confidenceTrack: {
+    flex: 1,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: COLOR.tealGlow,
+    overflow: 'hidden',
+  },
+  confidenceFill: {
+    height: '100%',
+    borderRadius: 3,
+    backgroundColor: COLOR.tealLight,
+  },
   medicalTag: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -294,6 +447,9 @@ export const styles = StyleSheet.create({
     borderRadius: RADIUS.pill,
     paddingHorizontal: 8,
     paddingVertical: 3,
+    marginHorizontal: 16,
+    marginBottom: 14,
+    alignSelf: 'flex-start',
   },
   medicalTagText: {
     fontFamily: FONT.sans,
@@ -308,13 +464,21 @@ export const styles = StyleSheet.create({
     borderRadius: RADIUS.lg,
     borderWidth: 1,
     borderColor: COLOR.borderCard,
-    paddingBottom: 16,
-    minHeight: 80,
-    shadowColor: COLOR.tealDeep,
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.04,
-    shadowRadius: 6,
-    elevation: 1,
+    borderStyle: 'dashed',
+    paddingBottom: 22,
+    minHeight: 96,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  outputIconWrap: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: COLOR.tealGlow,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: 4,
+    marginBottom: 8,
   },
   outputTextMuted: {
     fontFamily: FONT.sans,
@@ -322,7 +486,68 @@ export const styles = StyleSheet.create({
     color: COLOR.inkFaint,
     fontStyle: 'italic',
     paddingHorizontal: 16,
-    marginTop: 4,
+    textAlign: 'center',
+  },
+
+  // ── Quick stats row (e.g. signs detected / session time) ─────────────────
+  statsRow: {
+    flexDirection: 'row',
+    gap: 12,
+  },
+  statChip: {
+    flex: 1,
+    backgroundColor: COLOR.bgCard,
+    borderRadius: RADIUS.md,
+    borderWidth: 1,
+    borderColor: COLOR.borderCard,
+    paddingVertical: 14,
+    paddingHorizontal: 12,
+    alignItems: 'flex-start',
+    gap: 4,
+  },
+  statChipValue: {
+    fontFamily: FONT.serif,
+    fontSize: 22,
+    color: COLOR.inkPrimary,
+    letterSpacing: -0.3,
+  },
+  statChipLabel: {
+    fontFamily: FONT.sans,
+    fontSize: 10,
+    fontWeight: '600',
+    color: COLOR.inkFaint,
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+  },
+
+  // ── Tips card ─────────────────────────────────────────────────────────────
+  tipRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 10,
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+  },
+  tipBullet: {
+    width: 20,
+    height: 20,
+    borderRadius: 10,
+    backgroundColor: COLOR.tealGlow,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: 1,
+  },
+  tipText: {
+    flex: 1,
+    fontFamily: FONT.sans,
+    fontSize: 13,
+    color: COLOR.inkPrimary,
+    lineHeight: 18,
+  },
+  divider: {
+    height: 1,
+    backgroundColor: COLOR.borderCard,
+    marginHorizontal: 16,
   },
 
   // ── History rows ──────────────────────────────────────────────────────────
@@ -331,14 +556,15 @@ export const styles = StyleSheet.create({
     alignItems: 'center',
     paddingHorizontal: 16,
     paddingVertical: 13,
+    gap: 12,
   },
   historyRowBorder: {
     borderBottomWidth: 1,
     borderBottomColor: COLOR.borderCard,
   },
   historyIconWrap: {
-    width: 34,
-    height: 34,
+    width: 36,
+    height: 36,
     borderRadius: RADIUS.sm,
     backgroundColor: COLOR.tealGlow,
     borderWidth: 1,
@@ -349,6 +575,9 @@ export const styles = StyleSheet.create({
   historyIconMedical: {
     backgroundColor: COLOR.amberSurface,
     borderColor: 'rgba(217,119,6,0.20)',
+  },
+  historyTextWrap: {
+    flex: 1,
   },
   historySign: {
     fontFamily: FONT.sans,
@@ -376,9 +605,14 @@ export const styles = StyleSheet.create({
     justifyContent: 'center',
     backgroundColor: COLOR.tealLight,
     borderRadius: RADIUS.md,
-    height: 52,
+    height: 56,
     gap: 10,
     marginTop: 4,
+    shadowColor: COLOR.tealDeep,
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.18,
+    shadowRadius: 10,
+    elevation: 4,
   },
   primaryBtnText: {
     fontFamily: FONT.sans,
@@ -391,6 +625,8 @@ export const styles = StyleSheet.create({
     backgroundColor: COLOR.redSurface,
     borderWidth: 1.5,
     borderColor: COLOR.redBorder,
+    shadowOpacity: 0,
+    elevation: 0,
   },
   stopBtnText: {
     color: COLOR.red,

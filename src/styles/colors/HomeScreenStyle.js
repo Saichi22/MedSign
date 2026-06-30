@@ -8,16 +8,61 @@ export const styles = StyleSheet.create({
     backgroundColor: COLOR.bgPage,
   },
 
+  // ── Ambient page background ─────────────────────────────────────────────────
+  // Two soft, out-of-focus color blobs anchored off-canvas top-left/bottom-right
+  // (teal + a warm amber accent, echoing the Saved Signs tint) plus a faint dot
+  // grid threaded through the middle of the page. Everything sits well under
+  // 6% opacity so it reads as paper texture, never competing with card content
+  // or text — the cards' own opaque backgrounds sit on top regardless.
+  pageBgLayer: {
+    ...StyleSheet.absoluteFillObject,
+    overflow: 'hidden',
+  },
+  pageBgBlobTop: {
+    position: 'absolute',
+    top: 140,
+    left: -90,
+    width: 220,
+    height: 220,
+    borderRadius: 110,
+    backgroundColor: 'rgba(52, 233, 253, 0.3)',
+  },
+  pageBgBlobBottom: {
+    position: 'absolute',
+    bottom: 60,
+    right: -100,
+    width: 260,
+    height: 260,
+    borderRadius: 130,
+    backgroundColor: 'rgba(245,158,11,0.07)',
+  },
+  pageDotGrid: {
+    position: 'absolute',
+    top: 260,
+    left: 0,
+    right: 0,
+    gap: 28,
+  },
+  pageDotRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-evenly',
+  },
+  pageDot: {
+    width: 4,
+    height: 4,
+    borderRadius: 1.5,
+    backgroundColor: 'rgba(10,155,170,0.10)',
+  },
+
   // ── Header ───────────────────────────────────────────────────────────────────
   header: {
     backgroundColor: COLOR.tealDeep,
     paddingTop: Platform.OS === 'ios' ? 60 : 44,
-    paddingBottom: 24,
+    paddingBottom: 12,
     paddingHorizontal: 24,
-    borderBottomLeftRadius: RADIUS.xl,
-    borderBottomRightRadius: RADIUS.xl,
     overflow: 'hidden',
   },
+  // Header signature: one soft circular blob, tucked top-right, barely-there.
   headerBlob: {
     position: 'absolute',
     top: -W * 0.2,
@@ -25,7 +70,7 @@ export const styles = StyleSheet.create({
     width: W * 0.55,
     height: W * 0.55,
     borderRadius: W * 0.275,
-    backgroundColor: 'rgba(10,155,170,0.13)',
+    backgroundColor: 'rgba(126,221,227,0.10)',
   },
   headerTop: {
     flexDirection: 'row',
@@ -65,174 +110,147 @@ export const styles = StyleSheet.create({
     paddingBottom: 48,
   },
 
-  // ── Translator Card ───────────────────────────────────────────────────────────
+  // ── Translator CTA (hero card) ──────────────────────────────────────────────
+  // Solid hero card that replaces the old live-camera viewfinder. Deliberately
+  // a darker, denser teal than the header (#0D2B2E vs tealDeep) with an offset
+  // dual-glow + faint pulse-line watermark, so it reads as its own surface
+  // rather than a continuation of the header band above it.
   translatorCard: {
-    backgroundColor: COLOR.bgCard,
+    backgroundColor: '#0D2B2E',
     borderRadius: RADIUS.xl,
-    padding: 20,
-    marginBottom: 28,
-    borderWidth: 1,
-    borderColor: COLOR.borderCard,
+    padding: 22,
+    overflow: 'hidden',
     shadowColor: COLOR.tealDeep,
-    shadowOffset: { width: 0, height: 6 },
-    shadowOpacity: 0.08,
-    shadowRadius: 16,
-    elevation: 4,
+    shadowOffset: { width: 0, height: 10 },
+    shadowOpacity: 0.22,
+    shadowRadius: 22,
+    elevation: 6,
   },
-  cardHeader: {
+  translatorGlowTop: {
+    position: 'absolute',
+    top: -40,
+    left: -40,
+    width: 140,
+    height: 140,
+    borderRadius: 70,
+    backgroundColor: 'rgba(10,155,170,0.35)',
+  },
+  translatorGlowBottom: {
+    position: 'absolute',
+    bottom: -70,
+    right: -40,
+    width: 200,
+    height: 200,
+    borderRadius: 100,
+    backgroundColor: 'rgba(126,221,227,0.16)',
+  },
+  // Graph-paper style grid — gives the card real texture instead of a flat
+  // fill. Lines are hairline and low-opacity so they read as a surface
+  // material, not as content competing with the text.
+  translatorGridLayer: {
+    ...StyleSheet.absoluteFillObject,
+  },
+  translatorGridLineH: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    height: 1,
+    backgroundColor: 'rgba(255,255,255,0.05)',
+  },
+  translatorGridLineV: {
+    position: 'absolute',
+    top: 0,
+    bottom: 0,
+    width: 1,
+    backgroundColor: 'rgba(255,255,255,0.05)',
+  },
+  translatorWatermark: {
+    position: 'absolute',
+    bottom: -22,
+    right: -14,
+  },
+  // Scrim sits above the pattern/glow and below the text, darkening just
+  // enough that title/body copy stay fully legible no matter what's behind.
+  translatorScrim: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(13,43,46,0.38)',
+  },
+  translatorTopRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
     marginBottom: 18,
   },
-  cardTitleRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-  },
-  cardIconWrap: {
-    width: 36,
-    height: 36,
+  translatorIconWrap: {
+    width: 44,
+    height: 44,
     borderRadius: RADIUS.sm,
-    backgroundColor: COLOR.tealGlow,
+    backgroundColor: 'rgba(255,255,255,0.14)',
     borderWidth: 1,
-    borderColor: 'rgba(10,155,170,0.18)',
+    borderColor: 'rgba(255,255,255,0.20)',
     alignItems: 'center',
     justifyContent: 'center',
   },
-  cardTitle: {
-    fontFamily: FONT.serif,
-    fontSize: 17,
-    color: COLOR.inkPrimary,
-    letterSpacing: -0.2,
-  },
-  cardSub: {
-    fontFamily: FONT.sans,
-    fontSize: 11,
-    color: COLOR.inkFaint,
-    marginTop: 1,
-  },
-  liveBadge: {
+  translatorLiveBadge: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 5,
+    gap: 6,
     paddingHorizontal: 10,
-    paddingVertical: 5,
+    paddingVertical: 6,
     borderRadius: 100,
-    backgroundColor: '#F1F5F9',
+    backgroundColor: 'rgba(255,255,255,0.10)',
     borderWidth: 1,
-    borderColor: COLOR.borderIdle,
+    borderColor: 'rgba(255,255,255,0.16)',
   },
-  liveBadgeActive: {
-    backgroundColor: 'rgba(34,197,94,0.10)',
-    borderColor: 'rgba(34,197,94,0.25)',
-  },
-  liveDot: {
+  translatorLiveDot: {
     width: 6,
     height: 6,
     borderRadius: 3,
-    backgroundColor: '#CBD5E1',
+    backgroundColor: COLOR.tealLight,
   },
-  liveDotActive: { backgroundColor: '#22C55E' },
-  liveText: {
-    fontFamily: FONT.sans,
-    fontSize: 10,
-    fontWeight: '700',
-    color: COLOR.inkFaint,
-    letterSpacing: 0.8,
-  },
-  liveTextActive: { color: '#16A34A' },
-  viewfinderWrap: { marginBottom: 14 },
-  viewfinder: {
-    height: 200,
-    borderRadius: RADIUS.lg,
-    backgroundColor: '#0D2B2E',
-    alignItems: 'center',
-    justifyContent: 'center',
-    overflow: 'hidden',
-    borderWidth: 1,
-    borderColor: 'rgba(10,155,170,0.20)',
-  },
-  corner: {
-    position: 'absolute',
-    width: 20,
-    height: 20,
-    borderColor: COLOR.tealLight,
-    borderWidth: 2,
-  },
-  cornerTL: { top: 14, left: 14,  borderRightWidth: 0,  borderBottomWidth: 0, borderTopLeftRadius: 4 },
-  cornerTR: { top: 14, right: 14, borderLeftWidth: 0,   borderBottomWidth: 0, borderTopRightRadius: 4 },
-  cornerBL: { bottom: 14, left: 14,  borderRightWidth: 0, borderTopWidth: 0, borderBottomLeftRadius: 4 },
-  cornerBR: { bottom: 14, right: 14, borderLeftWidth: 0,  borderTopWidth: 0, borderBottomRightRadius: 4 },
-  viewfinderCenter: { alignItems: 'center', gap: 10 },
-  viewfinderHint: {
-    fontFamily: FONT.sans,
-    fontSize: 12,
-    color: 'rgba(126,221,227,0.45)',
-    letterSpacing: 0.3,
-  },
-  pulseRing: {
-    position: 'absolute',
-    width: 120,
-    height: 120,
-    borderRadius: 60,
-    borderWidth: 2,
-    borderColor: 'rgba(126,221,227,0.30)',
-  },
-  outputBox: {
-    backgroundColor: COLOR.bgPage,
-    borderRadius: RADIUS.md,
-    borderWidth: 1,
-    borderColor: COLOR.borderIdle,
-    paddingHorizontal: 14,
-    paddingVertical: 12,
-    marginBottom: 16,
-    minHeight: 56,
-    justifyContent: 'center',
-  },
-  outputLabel: {
+  translatorLiveText: {
     fontFamily: FONT.sans,
     fontSize: 9,
     fontWeight: '700',
-    color: COLOR.inkFaint,
+    color: 'rgba(255,255,255,0.85)',
     letterSpacing: 1,
-    textTransform: 'uppercase',
-    marginBottom: 4,
   },
-  outputText: {
+  translatorTitle: {
     fontFamily: FONT.serif,
-    fontSize: 15,
-    color: COLOR.inkPrimary,
-    letterSpacing: -0.1,
+    fontSize: 21,
+    color: COLOR.white,
+    letterSpacing: -0.3,
+    marginBottom: 6,
   },
-  outputTextMuted: {
-    color: COLOR.inkFaint,
+  translatorSub: {
     fontFamily: FONT.sans,
-    fontSize: 13,
-    fontStyle: 'italic',
+    fontSize: 12.5,
+    lineHeight: 18,
+    color: 'rgba(255,255,255,0.62)',
+    marginBottom: 22,
+    maxWidth: '92%',
   },
-  startBtn: {
+  translatorCtaRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'center',
+    justifyContent: 'space-between',
+  },
+  translatorCtaBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
     backgroundColor: COLOR.tealLight,
     borderRadius: RADIUS.md,
-    height: 52,
-    gap: 10,
+    paddingHorizontal: 18,
+    height: 46,
   },
-  startBtnText: {
+  translatorCtaText: {
     fontFamily: FONT.sans,
-    fontSize: 15,
+    fontSize: 14,
     fontWeight: '700',
     color: COLOR.tealDeep,
     letterSpacing: 0.2,
   },
-  stopBtn: {
-    backgroundColor: '#FEF2F2',
-    borderWidth: 1.5,
-    borderColor: '#FECACA',
-  },
-  stopBtnText: { color: '#EF4444' },
 
   // ── Section Label ─────────────────────────────────────────────────────────────
   sectionLabel: {
@@ -383,15 +401,13 @@ export const styles = StyleSheet.create({
     justifyContent: 'center',
   },
 
-  // ── Quick Actions ─────────────────────────────────────────────────────────────
-  quickGrid: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
+  // ── Quick Actions (organized as a clean list of rows, each independently
+  //    tappable, each with its own tinted icon so the four actions read as
+  //    distinct destinations rather than a generic grid) ──────────────────────
+  quickList: {
     gap: 10,
-    marginBottom: 24,
   },
   quickCard: {
-    width: (W - 50) / 2,
     backgroundColor: COLOR.bgCard,
     borderRadius: RADIUS.md,
     borderWidth: 1,
@@ -400,7 +416,7 @@ export const styles = StyleSheet.create({
     paddingVertical: 14,
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 10,
+    gap: 12,
     shadowColor: COLOR.tealDeep,
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.05,
@@ -408,8 +424,8 @@ export const styles = StyleSheet.create({
     elevation: 2,
   },
   quickIconWrap: {
-    width: 36,
-    height: 36,
+    width: 40,
+    height: 40,
     borderRadius: RADIUS.sm,
     backgroundColor: COLOR.tealGlow,
     borderWidth: 1,
@@ -419,14 +435,14 @@ export const styles = StyleSheet.create({
   },
   quickLabel: {
     fontFamily: FONT.sans,
-    fontSize: 12,
+    fontSize: 13.5,
     fontWeight: '600',
     color: COLOR.inkPrimary,
-    lineHeight: 16,
+    lineHeight: 17,
   },
   quickSublabel: {
     fontFamily: FONT.sans,
-    fontSize: 10,
+    fontSize: 11,
     color: COLOR.inkFaint,
     marginTop: 2,
   },
