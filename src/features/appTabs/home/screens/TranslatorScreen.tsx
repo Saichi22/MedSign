@@ -125,24 +125,131 @@ const INPUT_SIZE      = 640;
 
 interface SignDetection { label: string; confidence: number; }
 
+// ── DEVICE TESTING OVERRIDE ─────────────────────────────────────────────────
+// Set this to force a specific rotation value regardless of what
+// photo.orientation/EXIF report — use this to empirically determine the
+// correct value on a specific physical device, then remove/null it out
+// once confirmed (or wire it to a per-manufacturer table below once you've
+// verified actual values on real hardware, not assumed ones).
+//
+// HOW TO USE: on the device that's wrong, try 0, then 90, then 180, then 270
+// here, rebuild, and check which one makes the prediction's hand orientation
+// look correct relative to your real hand. Whichever value fixes it is the
+// CONFIRMED value for that device — not a guess from a forum post.
+const FRONT_CAM_ROTATION_OVERRIDE: 0 | 90 | 180 | 270 | null = null;
+
 // ─── Map VisionCamera orientation string → degrees needed to correct it ───────
+// NOTE: 'photo.orientation' is the "display orientation" VisionCamera reports
+// (how the photo should be rotated so it appears upright). It does NOT agree
+// reliably across vendors — Samsung's One UI camera HAL has been observed
+// reporting different strings for the same physical front-camera orientation
+// depending on Android/One UI version. Treat this as a first guess, with an
+// EXIF fallback below, rather than ground truth.
 const ROTATION_MAP: Record<string, 0 | 90 | 180 | 270> = {
   'portrait':             0,
-  'landscape-left':       90,   // Samsung front cam typical case
+  'landscape-left':       90,
   'landscape-right':      270,
   'portrait-upside-down': 180,
 };
 
+// EXIF orientation tag → degrees the buffer is rotated away from upright.
+// Used as a fallback/cross-check when photo.orientation is missing or
+// unrecognized. Only rotation-only tag values are mapped (1/3/6/8) since
+// mirroring is handled as its own explicit step below, not inferred from
+// EXIF's flip-variant tags (2/4/5/7).
+const EXIF_ROTATION_MAP: Record<number, 0 | 90 | 180 | 270> = {
+  1: 0,    // top-left, normal
+  3: 180,  // bottom-right
+  6: 90,   // right-top (rotated 90° CW)
+  8: 270,  // left-bottom (rotated 90° CCW)
+};
+
+// Front camera frames are always mirrored horizontally — selfie-mirror UX,
+// and almost certainly how the model's training images were captured.
+// Kept as its own constant/flag rather than folded into rotation logic so
+// it can never silently disappear depending on which rotation case fires
+// (that was the bug: mirroring only happened in the 0° branch before).
+const MIRROR_FRONT_CAMERA = true;
+
+// Resolve rotation correction in degrees. Prefers photo.orientation but
+// falls back to EXIF metadata when the orientation string is missing or
+// not one we recognize, and logs loudly in both the fallback and the
+// "still couldn't determine it" cases so unfamiliar device behaviour shows
+// up in logcat instead of silently defaulting to 0°.
+//
+// IMPORTANT — the 90°-vs-270° ambiguity:
+// Buffer width/height alone can confirm THAT a 90-family rotation is needed
+// (aspect ratio won't match an upright portrait frame) but cannot determine
+// WHICH direction (CW vs CCW) — that's inherent to the data, not something
+// derivable purely from dimensions. So when photo.orientation reports
+// 'landscape-left' or 'landscape-right', we trust VisionCamera's own
+// platform-level orientation logic rather than re-guessing the direction
+// ourselves. If a specific device is still wrong, FRONT_CAM_ROTATION_OVERRIDE
+// below lets you force a value for on-device testing without re-deploying
+// guesswork into the rotation map itself.
+function getRotationDeg(
+  orientation: string | undefined,
+  exifOrientation: number | undefined,
+  srcW: number,
+  srcH: number,
+): 0 | 90 | 180 | 270 {
+  if (FRONT_CAM_ROTATION_OVERRIDE !== null) {
+    console.log(`[SignTranslator] using FRONT_CAM_ROTATION_OVERRIDE=${FRONT_CAM_ROTATION_OVERRIDE}`);
+    return FRONT_CAM_ROTATION_OVERRIDE;
+  }
+
+  let resolved: 0 | 90 | 180 | 270 | null = null;
+  let source = 'none';
+
+  if (orientation && orientation in ROTATION_MAP) {
+    resolved = ROTATION_MAP[orientation];
+    source = 'photo.orientation';
+  } else if (exifOrientation !== undefined && exifOrientation in EXIF_ROTATION_MAP) {
+    resolved = EXIF_ROTATION_MAP[exifOrientation];
+    source = 'EXIF';
+  }
+
+  // Dimension sanity check: does the resolved rotation actually produce a
+  // portrait (taller-than-wide) logical frame? Front-facing handheld shots
+  // should be portrait. If resolved rotation says "0 or 180" but the raw
+  // buffer is wider than tall (or vice versa), the orientation source is
+  // very likely wrong for this device/build — flag it loudly rather than
+  // silently trusting a source that disagrees with the actual pixels.
+  const bufferIsLandscape = srcW > srcH;
+  const rotationClaimsNoSwap = resolved === 0 || resolved === 180 || resolved === null;
+  const mismatch = bufferIsLandscape === rotationClaimsNoSwap; // landscape buffer but "no swap" claimed, or portrait buffer but swap claimed... see log below for exact reasoning printed per-frame
+
+  if (resolved === null) {
+    console.warn(
+      `[SignTranslator] could not determine rotation from photo.orientation="${orientation}" ` +
+      `or EXIF=${exifOrientation}, buffer=${srcW}x${srcH} — defaulting to 0°. ` +
+      `If detection looks wrong on this device, capture this log + device model.`
+    );
+    return 0;
+  }
+
+  console.log(
+    `[SignTranslator] rotation resolved=${resolved}° (source=${source}), ` +
+    `buffer=${srcW}x${srcH} (${bufferIsLandscape ? 'landscape' : 'portrait'}), ` +
+    `dimension check ${mismatch ? 'DISAGREES — verify on this device' : 'consistent'}`
+  );
+
+  return resolved;
+}
+
 // ─── Center-crop + rotation correction + resize to INPUT_SIZE×INPUT_SIZE ──────
-// rotationDeg = how many degrees the raw buffer is rotated AWAY from portrait.
-// At 0° we also apply a horizontal mirror for front cameras (POCO behaviour).
-// At 90°/270° the rotation math inherently corrects Samsung's flipped output.
+// rotationDeg = how many degrees the raw buffer is rotated AWAY from upright.
+// mirror = whether to additionally flip horizontally AFTER rotation
+// correction (front camera selfie-mirror). Rotation and mirror are two
+// independent, composable steps — neither special-cases the other, so the
+// mirror can't silently vanish depending on which rotationDeg comes in.
 function resizeToFloat32(
   pixels: Uint8Array,
   srcW: number,
   srcH: number,
   channels: 3 | 4,
   rotationDeg: 0 | 90 | 180 | 270 = 0,
+  mirror: boolean = false,
 ): Float32Array {
   // After correcting rotation, logical dimensions may be swapped
   const logW = (rotationDeg === 90 || rotationDeg === 270) ? srcH : srcW;
@@ -157,14 +264,20 @@ function resizeToFloat32(
 
   for (let y = 0; y < INPUT_SIZE; y++) {
     for (let x = 0; x < INPUT_SIZE; x++) {
-      // Logical pixel in the correctly-oriented (portrait) frame
-      const lx = Math.min(Math.floor(x * scale) + cropX0, logW - 1);
+      // Logical pixel in the correctly-oriented (upright) frame, BEFORE mirror
+      let lx = Math.min(Math.floor(x * scale) + cropX0, logW - 1);
       const ly = Math.min(Math.floor(y * scale) + cropY0, logH - 1);
 
-      // Map logical → physical coords in the raw buffer
+      // Apply mirror as an independent step on the upright logical frame,
+      // regardless of which rotation case applies below.
+      if (mirror) {
+        lx = logW - 1 - lx;
+      }
+
+      // Map logical (upright, post-mirror) → physical coords in the raw buffer
       let px: number, py: number;
       if (rotationDeg === 90) {
-        // Raw buffer is rotated 90° CW relative to portrait → undo
+        // Raw buffer is rotated 90° CW relative to upright → undo
         px = srcW - 1 - ly;
         py = lx;
       } else if (rotationDeg === 270) {
@@ -174,8 +287,7 @@ function resizeToFloat32(
         px = srcW - 1 - lx;
         py = srcH - 1 - ly;
       } else {
-        // 0° — apply horizontal flip for front camera (POCO / default behaviour)
-        px = srcW - 1 - lx;
+        px = lx;
         py = ly;
       }
 
@@ -270,12 +382,17 @@ export default function SignTranslatorScreen() {
       const photo = await cameraRef.current.takePhoto({ flash: 'off' });
       const filePath = photo.path.startsWith('file://') ? photo.path : `file://${photo.path}`;
 
-      // 2. Determine rotation needed to correct the raw pixel orientation.
-      //    VisionCamera stores the correct presentation orientation in photo.orientation.
-      //    Samsung devices typically report 'landscape-left' for front-cam portrait shots.
-      const rotationDeg: 0 | 90 | 180 | 270 =
-        ROTATION_MAP[(photo as any).orientation ?? 'portrait'] ?? 0;
-      console.log(`[SignTranslator] photo.orientation=${(photo as any).orientation}, rotationDeg=${rotationDeg}`);
+      // 2. Capture raw orientation signals (resolved into a rotation value
+      //    after decode, once we know the actual buffer dimensions — see
+      //    step 3b below, which needs srcW/srcH for the sanity check).
+      const rawOrientation: string | undefined = (photo as any).orientation;
+      const exifOrientation: number | undefined =
+        (photo as any).metadata?.Orientation ?? (photo as any).metadata?.orientation;
+      console.log(
+        `[SignTranslator] raw orientation inputs — photo.orientation="${rawOrientation}", ` +
+        `photo.metadata.Orientation=${exifOrientation}, ` +
+        `photo.width=${(photo as any).width}, photo.height=${(photo as any).height}`
+      );
 
       // 3. Decode JPEG → raw pixel buffer via nitro-image
       const image = await Images.loadFromFileAsync(filePath);
@@ -291,8 +408,18 @@ export default function SignTranslatorScreen() {
       const inferredChannels = Math.round(srcPixels.length / totalPixels) as 3 | 4;
       console.log(`[SignTranslator] image ${srcW}×${srcH}, buffer=${srcPixels.length}, channels=${inferredChannels}`);
 
-      // 4. Resize → 640×640 float32 [0–1], with rotation + mirror correction
-      const float32Input = resizeToFloat32(srcPixels, srcW, srcH, inferredChannels, rotationDeg);
+      // 3b. Resolve rotation now that we have real buffer dimensions to
+      //     sanity-check the orientation source against.
+      const rotationDeg = getRotationDeg(rawOrientation, exifOrientation, srcW, srcH);
+      console.log(`[SignTranslator] resolved rotationDeg=${rotationDeg}, mirror=${MIRROR_FRONT_CAMERA}`);
+
+      // 4. Resize → 640×640 float32 [0–1], with rotation + mirror correction.
+      //    Front camera is always mirrored (selfie UX / training data
+      //    convention) — this is now independent of rotationDeg, see
+      //    MIRROR_FRONT_CAMERA above.
+      const float32Input = resizeToFloat32(
+        srcPixels, srcW, srcH, inferredChannels, rotationDeg, MIRROR_FRONT_CAMERA
+      );
 
       // 5. Run TFLite inference
       if (!model.model) return;
