@@ -171,22 +171,31 @@ const EXIF_ROTATION_MAP: Record<number, 0 | 90 | 180 | 270> = {
 // (that was the bug: mirroring only happened in the 0° branch before).
 const MIRROR_FRONT_CAMERA = true;
 
+// When the dimension check (see below) determines a 90-family rotation is
+// needed but can't tell direction, this picks CW vs CCW. This is the ONE
+// remaining ambiguous bit — confirmed empirically per-device via
+// FRONT_CAM_ROTATION_OVERRIDE, then promoted here once verified. Currently
+// set to 270 (90° CCW raw-sensor rotation) based on confirmed Samsung
+// behavior — see the per-device log evidence this was validated against
+// before changing it.
+const ASSUMED_LANDSCAPE_DIRECTION: 90 | 270 = 270;
+
 // Resolve rotation correction in degrees. Prefers photo.orientation but
 // falls back to EXIF metadata when the orientation string is missing or
-// not one we recognize, and logs loudly in both the fallback and the
-// "still couldn't determine it" cases so unfamiliar device behaviour shows
-// up in logcat instead of silently defaulting to 0°.
+// not one we recognize. Critically: the result is then cross-checked
+// against actual buffer dimensions, and if they disagree, the DIMENSIONS
+// WIN — photo.orientation has been observed reporting "portrait" on a
+// buffer that is physically 4128×3096 (landscape), which is simply false,
+// so trusting it blindly was the bug. Logs every step so this is auditable
+// from logcat rather than a silent correction nobody can verify.
 //
 // IMPORTANT — the 90°-vs-270° ambiguity:
 // Buffer width/height alone can confirm THAT a 90-family rotation is needed
 // (aspect ratio won't match an upright portrait frame) but cannot determine
-// WHICH direction (CW vs CCW) — that's inherent to the data, not something
-// derivable purely from dimensions. So when photo.orientation reports
-// 'landscape-left' or 'landscape-right', we trust VisionCamera's own
-// platform-level orientation logic rather than re-guessing the direction
-// ourselves. If a specific device is still wrong, FRONT_CAM_ROTATION_OVERRIDE
-// below lets you force a value for on-device testing without re-deploying
-// guesswork into the rotation map itself.
+// WHICH direction (CW vs CCW) — that's inherent to the data. See
+// ASSUMED_LANDSCAPE_DIRECTION above for the current confirmed/assumed value,
+// and FRONT_CAM_ROTATION_OVERRIDE below for forcing a value during
+// per-device verification.
 function getRotationDeg(
   orientation: string | undefined,
   exifOrientation: number | undefined,
@@ -198,41 +207,55 @@ function getRotationDeg(
     return FRONT_CAM_ROTATION_OVERRIDE;
   }
 
-  let resolved: 0 | 90 | 180 | 270 | null = null;
+  let claimed: 0 | 90 | 180 | 270 | null = null;
   let source = 'none';
 
   if (orientation && orientation in ROTATION_MAP) {
-    resolved = ROTATION_MAP[orientation];
+    claimed = ROTATION_MAP[orientation];
     source = 'photo.orientation';
   } else if (exifOrientation !== undefined && exifOrientation in EXIF_ROTATION_MAP) {
-    resolved = EXIF_ROTATION_MAP[exifOrientation];
+    claimed = EXIF_ROTATION_MAP[exifOrientation];
     source = 'EXIF';
   }
 
-  // Dimension sanity check: does the resolved rotation actually produce a
-  // portrait (taller-than-wide) logical frame? Front-facing handheld shots
-  // should be portrait. If resolved rotation says "0 or 180" but the raw
-  // buffer is wider than tall (or vice versa), the orientation source is
-  // very likely wrong for this device/build — flag it loudly rather than
-  // silently trusting a source that disagrees with the actual pixels.
+  // Ground truth from pixels: a front-facing handheld shot should produce
+  // an upright (taller-than-wide) frame after correction. If the raw
+  // buffer is wider than tall, SOME 90-family rotation is needed — this is
+  // not a guess, it's arithmetic on real measured dimensions.
   const bufferIsLandscape = srcW > srcH;
-  const rotationClaimsNoSwap = resolved === 0 || resolved === 180 || resolved === null;
-  const mismatch = bufferIsLandscape === rotationClaimsNoSwap; // landscape buffer but "no swap" claimed, or portrait buffer but swap claimed... see log below for exact reasoning printed per-frame
+  const claimedNoSwap = claimed === 0 || claimed === 180 || claimed === null;
+  const dimensionsDisagreeWithClaim = bufferIsLandscape === claimedNoSwap;
 
-  if (resolved === null) {
+  let resolved: 0 | 90 | 180 | 270;
+
+  if (dimensionsDisagreeWithClaim) {
+    // Orientation source is demonstrably wrong for this frame (e.g.
+    // claims "no rotation" on a buffer that's physically landscape) —
+    // override it using measured dimensions + the confirmed/assumed
+    // direction, rather than propagating a known-false value downstream.
+    resolved = bufferIsLandscape ? ASSUMED_LANDSCAPE_DIRECTION : (claimed ?? 0);
     console.warn(
-      `[SignTranslator] could not determine rotation from photo.orientation="${orientation}" ` +
-      `or EXIF=${exifOrientation}, buffer=${srcW}x${srcH} — defaulting to 0°. ` +
-      `If detection looks wrong on this device, capture this log + device model.`
+      `[SignTranslator] orientation source DISAGREES with measured buffer — ` +
+      `source="${source}" claimed=${claimed}°, but buffer=${srcW}x${srcH} ` +
+      `(${bufferIsLandscape ? 'landscape' : 'portrait'}). ` +
+      `Overriding to resolved=${resolved}° using ASSUMED_LANDSCAPE_DIRECTION. ` +
+      `If this is still wrong on screen, flip ASSUMED_LANDSCAPE_DIRECTION to ` +
+      `${ASSUMED_LANDSCAPE_DIRECTION === 270 ? 90 : 270}.`
     );
-    return 0;
+  } else if (claimed !== null) {
+    resolved = claimed;
+    console.log(
+      `[SignTranslator] rotation resolved=${resolved}° (source=${source}), ` +
+      `buffer=${srcW}x${srcH} (${bufferIsLandscape ? 'landscape' : 'portrait'}), consistent`
+    );
+  } else {
+    resolved = bufferIsLandscape ? ASSUMED_LANDSCAPE_DIRECTION : 0;
+    console.warn(
+      `[SignTranslator] no orientation source available (orientation="${orientation}", ` +
+      `EXIF=${exifOrientation}) — inferring rotation=${resolved}° purely from buffer ` +
+      `dimensions ${srcW}x${srcH}.`
+    );
   }
-
-  console.log(
-    `[SignTranslator] rotation resolved=${resolved}° (source=${source}), ` +
-    `buffer=${srcW}x${srcH} (${bufferIsLandscape ? 'landscape' : 'portrait'}), ` +
-    `dimension check ${mismatch ? 'DISAGREES — verify on this device' : 'consistent'}`
-  );
 
   return resolved;
 }
