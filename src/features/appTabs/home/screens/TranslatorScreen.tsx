@@ -51,9 +51,16 @@ export const SIGN_LABELS: string[] = [
 const NUM_CLASSES     = 58;
 const NUM_PREDICTIONS = 8400;
 const CONF_THRESHOLD  = 0.40;
-const THROTTLE_MS     = 400;
+// Bumped from 400 -> 700ms. Full photo capture + decode + 640x640 resize +
+// inference is heavy; giving more breathing room per cycle reduces sustained
+// pressure on the device and lowers odds of a tick overlapping the next one.
+const THROTTLE_MS     = 700;
 const CONFIRM_FRAMES  = 1;
 const INPUT_SIZE      = 640;
+// If a single tick hasn't finished within this long, something is stuck
+// (hung native call). Force busyRef back open so the loop can't wedge itself
+// forever — better to skip a frame than freeze the whole feature.
+const WATCHDOG_MS     = 5000;
 
 interface SignDetection { label: string; confidence: number; }
 
@@ -99,11 +106,6 @@ function getRotationDeg(
     source = 'EXIF';
   }
 
-  // Dimensions are ground truth: a portrait handheld shot should be taller
-  // than wide after rotation correction. If the raw buffer is landscape
-  // (wider than tall) but claimed rotation implies no axis-swap, the
-  // orientation source is wrong — override it from dimensions instead of
-  // propagating a known-false value into the resize step.
   const bufferIsLandscape = srcW > srcH;
   const claimedNoSwap = claimed === 0 || claimed === 180 || claimed === null;
   const dimensionsDisagreeWithClaim = bufferIsLandscape === claimedNoSwap;
@@ -151,7 +153,6 @@ function resizeToFloat32(
   const cropY0   = Math.floor((logH - cropSize) / 2);
   const scale    = cropSize / INPUT_SIZE;
 
-  // Write into the pre-allocated pool buffer rather than a new allocation
   const out = float32Pool;
 
   for (let y = 0; y < INPUT_SIZE; y++) {
@@ -212,7 +213,7 @@ export default function SignTranslatorScreen() {
   const loopRef      = useRef<ReturnType<typeof setTimeout> | null>(null);
   const busyRef      = useRef(false);
   const historyRef   = useRef<number[]>([]);
-  const mountedRef   = useRef(true);   // prevents setState after unmount
+  const mountedRef   = useRef(true);
   const HISTORY_SIZE = CONFIRM_FRAMES;
 
   const cardOpacity = useRef(new Animated.Value(0)).current;
@@ -221,7 +222,6 @@ export default function SignTranslatorScreen() {
   const model        = useTensorflowModel(require('../../../../assets/besta_float16.tflite'), []);
   const isModelReady = model.state === 'loaded';
 
-  // Track mount state so async callbacks don't call setState after unmount
   useEffect(() => {
     mountedRef.current = true;
     return () => { mountedRef.current = false; };
@@ -253,30 +253,33 @@ export default function SignTranslatorScreen() {
     let photoPath: string | null = null;
 
     try {
-      // 1. Capture
       const photo = await cameraRef.current.takePhoto({ flash: 'off' });
       photoPath = photo.path;
-      const capturedPath = photoPath; // narrowed non-null local
+      const capturedPath = photoPath;
       const filePath = capturedPath.startsWith('file://') ? capturedPath : `file://${capturedPath}`;
 
       const rawOrientation: string | undefined = (photo as any).orientation;
       const exifOrientation: number | undefined =
         (photo as any).metadata?.Orientation ?? (photo as any).metadata?.orientation;
 
-      // 2. Decode — held in a local variable so it can be released after use
-      const image = await Images.loadFromFileAsync(filePath);
+      // Decode. `image` is a local const that naturally falls out of scope
+      // and becomes GC-eligible once this function returns — Nitro
+      // HybridObjects don't need/have a manual dispose() call, they're
+      // reference-counted natively, so nothing extra to release here.
+      let image = await Images.loadFromFileAsync(filePath);
       const rawPixelData = await image.toRawPixelData();
       const srcW = image.width;
       const srcH = image.height;
 
-      // 3. Delete temp file as soon as pixels are in memory — don't wait until
-      //    the end of the function; this prevents disk accumulation on crash/error
+      // Drop the reference proactively rather than waiting for function exit —
+      // keeps it eligible for collection before the heavier work below runs.
+      image = null as any;
+
       await RNFS.unlink(photoPath).catch((e: unknown) =>
         console.warn('[SignTranslator] unlink failed:', e)
       );
-      photoPath = null; // mark as deleted so the finally block skips it
+      photoPath = null;
 
-      // 4. Build float32 input into the pre-allocated pool buffer
       const srcPixels = new Uint8Array(rawPixelData.buffer);
       const inferredChannels = Math.round(srcPixels.length / (srcW * srcH)) as 3 | 4;
 
@@ -285,16 +288,10 @@ export default function SignTranslatorScreen() {
         srcPixels, srcW, srcH, inferredChannels, rotationDeg, MIRROR_FRONT_CAMERA
       );
 
-      // 5. Explicitly null out the large decoded buffer so GC can collect it
-      //    before the (synchronous) inference call below holds the thread.
-      (rawPixelData as any).buffer = null;
-
-      // 6. Inference — runSync on the pool buffer's underlying ArrayBuffer
       if (!model.model) return;
       const outputs = model.model.runSync([float32Input.buffer as ArrayBuffer]);
       const output  = new Float32Array(outputs[0]);
 
-      // 7. Post-process — skip setState if component unmounted mid-inference
       if (!mountedRef.current) return;
 
       const result = findBestDetection(output);
@@ -321,8 +318,6 @@ export default function SignTranslatorScreen() {
     } catch (e) {
       console.warn('[SignTranslator] inference error:', e);
     } finally {
-      // Safety net: if anything threw before the explicit unlink above,
-      // attempt cleanup here so temp files never accumulate
       const remainingPath = photoPath;
       if (remainingPath) {
         await RNFS.unlink(remainingPath).catch((e: unknown) =>
@@ -333,8 +328,8 @@ export default function SignTranslatorScreen() {
     }
   }, [model.model]);
 
-  // ── Inference loop: only reschedule AFTER the previous tick completes,
-  // not on a fixed timer — prevents queuing frames faster than they process
+  // ── Inference loop: sequential (waits for previous tick before scheduling
+  // the next) + watchdog so a stuck native call can't wedge it permanently.
   useEffect(() => {
     if (!isDetecting || !isModelReady) return;
 
@@ -342,7 +337,16 @@ export default function SignTranslatorScreen() {
 
     const tick = async () => {
       if (cancelled) return;
+
+      const watchdog = setTimeout(() => {
+        // If runOnce hasn't returned by now, force the flag open so the
+        // loop can still schedule its next attempt instead of hanging forever.
+        busyRef.current = false;
+      }, WATCHDOG_MS);
+
       await runOnce();
+      clearTimeout(watchdog);
+
       if (!cancelled) {
         loopRef.current = setTimeout(tick, THROTTLE_MS);
       }
