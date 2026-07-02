@@ -631,4 +631,19 @@ export const styles = StyleSheet.create({
   stopBtnText: {
     color: COLOR.red,
   },
+  viewfinderWrap: {
+    height: 380,
+    backgroundColor: '#000000',
+    overflow: 'hidden',
+    position: 'relative',
+    borderBottomLeftRadius: RADIUS.lg - 1, // account for nested card stroke clipping
+    borderBottomRightRadius: RADIUS.lg - 1,
+  },
+  outputBox: {
+    paddingVertical: 32,
+    paddingHorizontal: 16,
+    minHeight: 140,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
 });

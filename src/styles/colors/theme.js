@@ -17,6 +17,8 @@ export const COLOR = {
   borderCard: '#E2EDED',
   borderIdle: '#D0E2E3',
   white: '#FFFFFF',
+  red: '#ff0000',
+  amber: '#ffbf00',
 };
 
 export const FONT = {
