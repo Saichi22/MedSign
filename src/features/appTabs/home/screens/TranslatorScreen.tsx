@@ -461,11 +461,7 @@ export default function SignTranslatorScreen() {
                 <Text style={styles.cardSub}>Keep hands clearly within the boundaries</Text>
               </View>
             </View>
-            {isDetecting && (
-              <View style={styles.cardHeaderChip}>
-                <Text style={styles.cardHeaderChipText}>SCANNING</Text>
-              </View>
-            )}
+           
           </View>
 
           <View style={styles.viewfinderWrap}>
