@@ -48,7 +48,7 @@ export const SIGN_LABELS: string[] = [
   'LALAMUNAN', 'MAHIRAP', 'MASAKIT', 'NAGSUSUKA', 'NAGTATAE', 'NAHIHILO', 'NAIIHI', 'NAMAMANAS', 'NANGHIHINA', 'TUMUTUSOK'
 ];
 
-const NUM_CLASSES     = 58; 
+const NUM_CLASSES     = 58;
 const NUM_PREDICTIONS = 8400;
 const CONF_THRESHOLD  = 0.40;
 const THROTTLE_MS     = 400;
@@ -57,6 +57,7 @@ const INPUT_SIZE      = 640;
 
 interface SignDetection { label: string; confidence: number; }
 
+// ── Rotation override: set to a number during per-device testing, null in prod
 const FRONT_CAM_ROTATION_OVERRIDE: 0 | 90 | 180 | 270 | null = null;
 
 const ROTATION_MAP: Record<string, 0 | 90 | 180 | 270> = {
@@ -71,6 +72,9 @@ const EXIF_ROTATION_MAP: Record<number, 0 | 90 | 180 | 270> = {
 };
 
 const MIRROR_FRONT_CAMERA = true;
+
+// Set to 270 (confirmed for Samsung; raw sensor buffer is 90° CCW from upright).
+// If a device still looks rotated after auto-correction, flip this to 90.
 const ASSUMED_LANDSCAPE_DIRECTION: 90 | 270 = 270;
 
 function getRotationDeg(
@@ -79,27 +83,57 @@ function getRotationDeg(
   srcW: number,
   srcH: number,
 ): 0 | 90 | 180 | 270 {
-  if (FRONT_CAM_ROTATION_OVERRIDE !== null) return FRONT_CAM_ROTATION_OVERRIDE;
-
-  let claimed: 0 | 90 | 180 | 270 | null = null;
-  if (orientation && orientation in ROTATION_MAP) {
-    claimed = ROTATION_MAP[orientation];
-  } else if (exifOrientation !== undefined && exifOrientation in EXIF_ROTATION_MAP) {
-    claimed = EXIF_ROTATION_MAP[exifOrientation];
+  if (FRONT_CAM_ROTATION_OVERRIDE !== null) {
+    console.log(`[SignTranslator] OVERRIDE active: rotationDeg=${FRONT_CAM_ROTATION_OVERRIDE}`);
+    return FRONT_CAM_ROTATION_OVERRIDE;
   }
 
+  let claimed: 0 | 90 | 180 | 270 | null = null;
+  let source = 'none';
+
+  if (orientation && orientation in ROTATION_MAP) {
+    claimed = ROTATION_MAP[orientation];
+    source = 'photo.orientation';
+  } else if (exifOrientation !== undefined && exifOrientation in EXIF_ROTATION_MAP) {
+    claimed = EXIF_ROTATION_MAP[exifOrientation];
+    source = 'EXIF';
+  }
+
+  // Dimensions are ground truth: a portrait handheld shot should be taller
+  // than wide after rotation correction. If the raw buffer is landscape
+  // (wider than tall) but claimed rotation implies no axis-swap, the
+  // orientation source is wrong — override it from dimensions instead of
+  // propagating a known-false value into the resize step.
   const bufferIsLandscape = srcW > srcH;
   const claimedNoSwap = claimed === 0 || claimed === 180 || claimed === null;
   const dimensionsDisagreeWithClaim = bufferIsLandscape === claimedNoSwap;
 
+  let resolved: 0 | 90 | 180 | 270;
+
   if (dimensionsDisagreeWithClaim) {
-    return bufferIsLandscape ? ASSUMED_LANDSCAPE_DIRECTION : (claimed ?? 0);
+    resolved = bufferIsLandscape ? ASSUMED_LANDSCAPE_DIRECTION : (claimed ?? 0);
+    console.warn(
+      `[SignTranslator] orientation mismatch — source="${source}" claimed=${claimed}°, ` +
+      `buffer=${srcW}x${srcH} (${bufferIsLandscape ? 'landscape' : 'portrait'}). ` +
+      `Overriding to ${resolved}°. If still wrong, flip ASSUMED_LANDSCAPE_DIRECTION to ` +
+      `${ASSUMED_LANDSCAPE_DIRECTION === 270 ? 90 : 270}.`
+    );
   } else if (claimed !== null) {
-    return claimed;
+    resolved = claimed;
+    console.log(`[SignTranslator] rotation=${resolved}° (${source}), buffer=${srcW}x${srcH}, consistent`);
   } else {
-    return bufferIsLandscape ? ASSUMED_LANDSCAPE_DIRECTION : 0;
+    resolved = bufferIsLandscape ? ASSUMED_LANDSCAPE_DIRECTION : 0;
+    console.warn(
+      `[SignTranslator] no orientation source — inferred rotation=${resolved}° from buffer ${srcW}x${srcH}`
+    );
   }
+
+  return resolved;
 }
+
+// ── Reusable output buffer: allocated once, reused every frame to avoid
+// creating a new ~5 MB Float32Array on each inference tick.
+const float32Pool = new Float32Array(INPUT_SIZE * INPUT_SIZE * 3);
 
 function resizeToFloat32(
   pixels: Uint8Array,
@@ -117,16 +151,15 @@ function resizeToFloat32(
   const cropY0   = Math.floor((logH - cropSize) / 2);
   const scale    = cropSize / INPUT_SIZE;
 
-  const out = new Float32Array(INPUT_SIZE * INPUT_SIZE * 3);
+  // Write into the pre-allocated pool buffer rather than a new allocation
+  const out = float32Pool;
 
   for (let y = 0; y < INPUT_SIZE; y++) {
     for (let x = 0; x < INPUT_SIZE; x++) {
       let lx = Math.min(Math.floor(x * scale) + cropX0, logW - 1);
       const ly = Math.min(Math.floor(y * scale) + cropY0, logH - 1);
 
-      if (mirror) {
-        lx = logW - 1 - lx;
-      }
+      if (mirror) lx = logW - 1 - lx;
 
       let px: number, py: number;
       if (rotationDeg === 90) {
@@ -172,20 +205,27 @@ export default function SignTranslatorScreen() {
   const { hasPermission, requestPermission } = useCameraPermission();
   const device = useCameraDevice('front');
 
-  const [isDetecting, setIsDetecting]   = useState(false);
-  const [detection, setDetection]       = useState<SignDetection | null>(null);
+  const [isDetecting, setIsDetecting] = useState(false);
+  const [detection, setDetection]     = useState<SignDetection | null>(null);
 
-  const cameraRef      = useRef<Camera>(null);
-  const loopRef        = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const busyRef        = useRef(false);
-  const historyRef     = useRef<number[]>([]);
-  const HISTORY_SIZE   = CONFIRM_FRAMES;
+  const cameraRef    = useRef<Camera>(null);
+  const loopRef      = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const busyRef      = useRef(false);
+  const historyRef   = useRef<number[]>([]);
+  const mountedRef   = useRef(true);   // prevents setState after unmount
+  const HISTORY_SIZE = CONFIRM_FRAMES;
 
   const cardOpacity = useRef(new Animated.Value(0)).current;
   const cardScale   = useRef(new Animated.Value(0.95)).current;
 
   const model        = useTensorflowModel(require('../../../../assets/besta_float16.tflite'), []);
   const isModelReady = model.state === 'loaded';
+
+  // Track mount state so async callbacks don't call setState after unmount
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => { mountedRef.current = false; };
+  }, []);
 
   useEffect(() => {
     if (detection) {
@@ -210,32 +250,52 @@ export default function SignTranslatorScreen() {
     if (busyRef.current || !cameraRef.current || !model.model) return;
     busyRef.current = true;
 
+    let photoPath: string | null = null;
+
     try {
+      // 1. Capture
       const photo = await cameraRef.current.takePhoto({ flash: 'off' });
-      const filePath = photo.path.startsWith('file://') ? photo.path : `file://${photo.path}`;
+      photoPath = photo.path;
+      const capturedPath = photoPath; // narrowed non-null local
+      const filePath = capturedPath.startsWith('file://') ? capturedPath : `file://${capturedPath}`;
 
       const rawOrientation: string | undefined = (photo as any).orientation;
       const exifOrientation: number | undefined =
         (photo as any).metadata?.Orientation ?? (photo as any).metadata?.orientation;
 
+      // 2. Decode — held in a local variable so it can be released after use
       const image = await Images.loadFromFileAsync(filePath);
       const rawPixelData = await image.toRawPixelData();
       const srcW = image.width;
       const srcH = image.height;
-      await RNFS.unlink(photo.path).catch(e => console.warn('[SignTranslator] unlink failed:', e));
 
+      // 3. Delete temp file as soon as pixels are in memory — don't wait until
+      //    the end of the function; this prevents disk accumulation on crash/error
+      await RNFS.unlink(photoPath).catch((e: unknown) =>
+        console.warn('[SignTranslator] unlink failed:', e)
+      );
+      photoPath = null; // mark as deleted so the finally block skips it
+
+      // 4. Build float32 input into the pre-allocated pool buffer
       const srcPixels = new Uint8Array(rawPixelData.buffer);
-      const totalPixels = srcW * srcH;
-      const inferredChannels = Math.round(srcPixels.length / totalPixels) as 3 | 4;
+      const inferredChannels = Math.round(srcPixels.length / (srcW * srcH)) as 3 | 4;
 
       const rotationDeg = getRotationDeg(rawOrientation, exifOrientation, srcW, srcH);
       const float32Input = resizeToFloat32(
         srcPixels, srcW, srcH, inferredChannels, rotationDeg, MIRROR_FRONT_CAMERA
       );
 
+      // 5. Explicitly null out the large decoded buffer so GC can collect it
+      //    before the (synchronous) inference call below holds the thread.
+      (rawPixelData as any).buffer = null;
+
+      // 6. Inference — runSync on the pool buffer's underlying ArrayBuffer
       if (!model.model) return;
       const outputs = model.model.runSync([float32Input.buffer as ArrayBuffer]);
       const output  = new Float32Array(outputs[0]);
+
+      // 7. Post-process — skip setState if component unmounted mid-inference
+      if (!mountedRef.current) return;
 
       const result = findBestDetection(output);
       const history = historyRef.current;
@@ -261,20 +321,37 @@ export default function SignTranslatorScreen() {
     } catch (e) {
       console.warn('[SignTranslator] inference error:', e);
     } finally {
+      // Safety net: if anything threw before the explicit unlink above,
+      // attempt cleanup here so temp files never accumulate
+      const remainingPath = photoPath;
+      if (remainingPath) {
+        await RNFS.unlink(remainingPath).catch((e: unknown) =>
+          console.warn('[SignTranslator] finally-unlink failed:', e)
+        );
+      }
       busyRef.current = false;
     }
   }, [model.model]);
 
+  // ── Inference loop: only reschedule AFTER the previous tick completes,
+  // not on a fixed timer — prevents queuing frames faster than they process
   useEffect(() => {
     if (!isDetecting || !isModelReady) return;
 
-    const tick = () => {
-      runOnce();
-      loopRef.current = setTimeout(tick, THROTTLE_MS);
+    let cancelled = false;
+
+    const tick = async () => {
+      if (cancelled) return;
+      await runOnce();
+      if (!cancelled) {
+        loopRef.current = setTimeout(tick, THROTTLE_MS);
+      }
     };
+
     loopRef.current = setTimeout(tick, 0);
 
     return () => {
+      cancelled = true;
       if (loopRef.current) clearTimeout(loopRef.current);
     };
   }, [isDetecting, isModelReady, runOnce]);
@@ -285,7 +362,10 @@ export default function SignTranslatorScreen() {
 
   const toggleDetection = useCallback(() => {
     setIsDetecting(prev => {
-      if (prev) setDetection(null);
+      if (prev) {
+        setDetection(null);
+        historyRef.current = [];
+      }
       return !prev;
     });
   }, []);
@@ -319,20 +399,17 @@ export default function SignTranslatorScreen() {
     );
   }
 
-  // Detect whether to apply alternate layout tags for specialized medical signs
   const isMedicalSign = detection && SIGN_LABELS.indexOf(detection.label) >= 48;
 
   return (
     <View style={styles.root}>
       <StatusBar barStyle="light-content" backgroundColor={COLOR.tealDeep} />
 
-      {/* Background soft blob decorations */}
       <View style={styles.bgLayer} pointerEvents="none">
         <View style={styles.bgBlobTopRight} />
         <View style={styles.bgBlobMidLeft} />
       </View>
 
-      {/* Header */}
       <View style={styles.header}>
         <View style={styles.headerBlob} />
         <View style={styles.headerTop}>
@@ -354,7 +431,6 @@ export default function SignTranslatorScreen() {
         contentContainerStyle={styles.scrollContent}
         showsVerticalScrollIndicator={false}
       >
-        {/* Model status alert */}
         {!isModelReady && (
           <View style={[styles.bannerCard, model.state === 'error' && styles.bannerCardError]}>
             <View style={[styles.bannerIconWrap, model.state === 'error' && styles.bannerIconWrapError]}>
@@ -370,7 +446,6 @@ export default function SignTranslatorScreen() {
           </View>
         )}
 
-        {/* Viewfinder block layout */}
         <View style={[styles.card, isMedicalSign && styles.cardMedical]}>
           <View style={styles.cardHeader}>
             <View style={styles.cardTitleRow}>
@@ -406,7 +481,6 @@ export default function SignTranslatorScreen() {
           </View>
         </View>
 
-        {/* Translation Output Matrix */}
         <View style={styles.card}>
           {!detection ? (
             <View style={styles.outputBox}>
@@ -421,7 +495,7 @@ export default function SignTranslatorScreen() {
             <Animated.View style={{ opacity: cardOpacity, transform: [{ scale: cardScale }] }}>
               <Text style={styles.sectionLabel}>DETECTED SIGN</Text>
               <Text style={styles.predictionLabel}>{detection.label}</Text>
-              
+
               {isMedicalSign && (
                 <View style={styles.medicalTag}>
                   <MaterialCommunityIcons name="heart-pulse" size={12} color={COLOR.amber} />
@@ -441,7 +515,6 @@ export default function SignTranslatorScreen() {
           )}
         </View>
 
-        {/* Action Trigger */}
         <TouchableOpacity
           style={[styles.primaryBtn, isDetecting && styles.stopBtn]}
           onPress={toggleDetection}
