@@ -9,6 +9,7 @@ import Ionicons from 'react-native-vector-icons/Ionicons';
 import AuthIndexScreen from '../auth/screens/IndexScreen';
 import LoginScreen from '../auth/screens/LoginScreen';
 import RegisterScreen from '../auth/screens/RegisterScreen';
+import ForgotPasswordScreen from '../auth/screens/ForgotPasswordScreen';
 import HomeScreen from '../appTabs/home/screens/HomeScreen';
 import SettingsScreen from '../appTabs/settings/screens/SettingsScreen';
 import TranslatorScreen from '../appTabs/home/screens/TranslatorScreen';
@@ -29,6 +30,11 @@ function AuthStack() {
       <Stack.Screen
         name="Register"
         component={RegisterScreen}
+        options={{ presentation: 'transparentModal', headerShown: false }}
+      />
+      <Stack.Screen
+        name="ForgotPassword"
+        component={ForgotPasswordScreen}
         options={{ presentation: 'transparentModal', headerShown: false }}
       />
     </Stack.Navigator>

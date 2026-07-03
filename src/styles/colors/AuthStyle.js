@@ -413,6 +413,15 @@ export const signInStyles = StyleSheet.create({
     color: COLOR.inkPrimary,
     paddingVertical: 0,
   },
+  inputIcon: {
+    marginRight: 2,
+  },
+  forgotText: {
+    fontFamily: FONT.sans,
+    fontSize: 12,
+    fontWeight: '600',
+    color: COLOR.tealMid,
+  },
 
   // ── Main Action Button ────────────────────────────────────────────────────
   signInBtn: {
