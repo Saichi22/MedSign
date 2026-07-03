@@ -244,7 +244,7 @@ export default function SignInScreen({ navigation }) {
                 ]}
               >
                 <MaterialCommunityIcons
-                  name="email-outline"
+                  name="email"
                   size={20}
                   color={focusedField === 'email' ? '#0A9BAA' : '#4A6E72'}
                   style={styles.inputIcon}
@@ -280,7 +280,7 @@ export default function SignInScreen({ navigation }) {
                 ]}
               >
                 <MaterialCommunityIcons
-                  name="lock-outline"
+                  name="lock"
                   size={20}
                   color={focusedField === 'password' ? '#0A9BAA' : '#4A6E72'}
                   style={styles.inputIcon}

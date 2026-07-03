@@ -77,7 +77,7 @@ const MIRROR_FRONT_CAMERA = true;
 
 // Set to 270 (confirmed for Samsung; raw sensor buffer is 90° CCW from upright).
 // If a device still looks rotated after auto-correction, flip this to 90.
-const ASSUMED_LANDSCAPE_DIRECTION: 90 | 270 = 270;
+const ASSUMED_LANDSCAPE_DIRECTION: 90 | 270 = 90;
 
 function getRotationDeg(
   orientation: string | undefined,
@@ -115,6 +115,7 @@ function getRotationDeg(
       `Overriding to ${resolved}°. If still wrong, flip ASSUMED_LANDSCAPE_DIRECTION to ` +
       `${ASSUMED_LANDSCAPE_DIRECTION === 270 ? 90 : 270}.`
     );
+    console.warn(`[SignTranslator] mismatch — ASSUMED_LANDSCAPE_DIRECTION is currently ${ASSUMED_LANDSCAPE_DIRECTION}`);
   } else if (claimed !== null) {
     resolved = claimed;
     console.log(`[SignTranslator] rotation=${resolved}° (${source}), buffer=${srcW}x${srcH}, consistent`);
