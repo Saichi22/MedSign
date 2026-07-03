@@ -300,7 +300,7 @@ export default function SignInScreen({ navigation }) {
                   hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
                 >
                   <MaterialCommunityIcons
-                    name={showPassword ? 'eye-outline' : 'eye-off-outline'}
+                    name={showPassword ? 'eye' : 'eye-off'}
                     size={20}
                     color="#8AACAF"
                   />
