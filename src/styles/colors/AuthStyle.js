@@ -99,19 +99,10 @@ export const indexStyles = StyleSheet.create({
     alignItems: 'center',
     gap: 10,
   },
-  brandIconWrap: {
-    width: 36,
-    height: 36,
-    borderRadius: RADIUS.sm,
-    backgroundColor: 'rgba(255,255,255,0.12)',
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.18)',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
+
   brandLogo: {
-    width: 20,
-    height: 20,
+    width: 44,
+    height: 44,
   },
   brandName: {
     fontFamily: FONT.serif,

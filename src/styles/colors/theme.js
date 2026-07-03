@@ -23,7 +23,7 @@ export const COLOR = {
 
 export const FONT = {
   serif: Platform.OS === 'ios' ? 'Georgia' : 'serif',
-  sans: Platform.OS === 'ios' ? 'System' : 'sans-serif',
+  sans: Platform.OS === 'ios' ? 'Arial' : 'sans-serif',
 };
 
 export const RADIUS = { sm: 10, md: 14, lg: 20, xl: 28, pill: 100 };
