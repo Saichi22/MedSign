@@ -187,9 +187,14 @@ export const styles = StyleSheet.create({
     borderRadius: RADIUS.sm,
     backgroundColor: 'rgba(255,255,255,0.14)',
     borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.20)',
+    borderColor: 'rgba(255, 255, 255, 0.2)',
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  translatorCustomIcon: {
+    width: 56,  
+    height: 56,  
+    tintColor: '#ffffff', 
   },
   translatorLiveBadge: {
     flexDirection: 'row',

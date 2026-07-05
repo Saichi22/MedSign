@@ -267,11 +267,13 @@ export default function SignInScreen({ navigation }) {
             <View style={styles.fieldGroup}>
               <View style={styles.labelRow}>
                 <Text style={styles.fieldLabel}>Password</Text>
+                <View style={styles.ForgotPasswordContainer}>
                 <TouchableOpacity
                   onPress={() => navigation.navigate('ForgotPassword')}
                 >
                   <Text style={styles.forgotText}>Forgot password?</Text>
                 </TouchableOpacity>
+                </View>
               </View>
               <View
                 style={[

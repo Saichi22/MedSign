@@ -382,6 +382,13 @@ export const signInStyles = StyleSheet.create({
   fieldGroup: {
     marginBottom: 12, // Reduced from 16
   },
+  labelRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+
+    marginBottom: 6,
+  },
   fieldLabel: {
     fontFamily: FONT.sans,
     fontSize: 11,
@@ -389,7 +396,7 @@ export const signInStyles = StyleSheet.create({
     color: COLOR.inkMuted,
     letterSpacing: 0.8,
     textTransform: 'uppercase',
-    marginBottom: 6, // Reduced from 8
+    
   },
   inputRow: {
     flexDirection: 'row',
@@ -416,6 +423,11 @@ export const signInStyles = StyleSheet.create({
   inputIcon: {
     marginRight: 2,
   },
+  ForgotPasswordContainer: {
+  borderBottomWidth: 1,         
+  borderBottomColor: COLOR.tealMid, 
+  paddingBottom: 1,               
+},
   forgotText: {
     fontFamily: FONT.sans,
     fontSize: 12,

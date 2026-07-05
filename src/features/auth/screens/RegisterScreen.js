@@ -208,7 +208,7 @@ export default function SignUpScreen({ navigation }) {
                 ]}
               >
                 <MaterialCommunityIcons
-                  name="email-outline"
+                  name="email"
                   size={20}
                   color={focusedField === 'email' ? '#0A9BAA' : '#4A6E72'}
                 />
@@ -235,7 +235,7 @@ export default function SignUpScreen({ navigation }) {
                 ]}
               >
                 <MaterialCommunityIcons
-                  name="lock-outline"
+                  name="lock"
                   size={20}
                   color={focusedField === 'pass' ? '#0A9BAA' : '#4A6E72'}
                 />
@@ -253,7 +253,7 @@ export default function SignUpScreen({ navigation }) {
                   onPress={() => setShowPassword(!showPassword)}
                 >
                   <MaterialCommunityIcons
-                    name={showPassword ? 'eye-outline' : 'eye-off-outline'}
+                    name={showPassword ? 'eye' : 'eye-off'}
                     size={20}
                     color="#8AACAF"
                   />
@@ -304,7 +304,7 @@ export default function SignUpScreen({ navigation }) {
                 ]}
               >
                 <MaterialCommunityIcons
-                  name="lock-check-outline"
+                  name="lock-check"
                   size={20}
                   color={focusedField === 'conf' ? '#0A9BAA' : '#4A6E72'}
                 />
@@ -320,7 +320,7 @@ export default function SignUpScreen({ navigation }) {
                 />
                 <TouchableOpacity onPress={() => setShowConfirm(!showConfirm)}>
                   <MaterialCommunityIcons
-                    name={showConfirm ? 'eye-outline' : 'eye-off-outline'}
+                    name={showConfirm ? 'eye' : 'eye-off'}
                     size={20}
                     color="#8AACAF"
                   />

@@ -7,13 +7,17 @@ import {
   ScrollView,
   StatusBar,
   Animated,
+  Image,
 } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import MaterialCommunityIcons from 'react-native-vector-icons/MaterialCommunityIcons';
-import { useAuth } from '../../../auth/services/AuthContext';
+import Icon from '@mdi/react';
+import { mdiSignLanguage } from '@mdi/js';
 
+import { useAuth } from '../../../auth/services/AuthContext';
 import { COLOR } from '../../../../styles/colors/theme';
 import { styles } from '../../../../styles/colors/HomeScreenStyle';
+import SignLanguageImg from '../../../../assets/images/signLanguage.png';
 
 // ─── Reusable press-scale wrapper ──────────────────────────────────────────────
 function Pressable({ style, onPress, children }) {
@@ -60,7 +64,11 @@ function TranslatorCard({ onPress }) {
 
       <View style={styles.translatorTopRow}>
         <View style={styles.translatorIconWrap}>
-          <MaterialCommunityIcons name="camera" size={22} color={COLOR.white} />
+          <Image 
+            source={SignLanguageImg} 
+            style={styles.translatorCustomIcon} 
+            resizeMode="contain"
+          />
         </View>
         <View style={styles.translatorLiveBadge}>
           <View style={styles.translatorLiveDot} />
@@ -75,10 +83,9 @@ function TranslatorCard({ onPress }) {
 
       <View style={styles.translatorCtaRow}>
         <View style={styles.translatorCtaBtn}>
-          <MaterialCommunityIcons name="camera-outline" size={17} color={COLOR.tealDeep} />
+          <MaterialCommunityIcons name="camera" size={17} color={COLOR.tealDeep} />
           <Text style={styles.translatorCtaText}>Start Translation</Text>
         </View>
-        <MaterialCommunityIcons name="arrow-right" size={20} color="rgba(255,255,255,0.85)" />
       </View>
     </Pressable>
   );
@@ -113,13 +120,7 @@ function PhrasebookCard({ onPress }) {
             <Text style={styles.phrasebookChipMoreText}>+26</Text>
           </View>
         </View>
-
-        <View style={styles.phrasebookOpenRow}>
-          <Text style={styles.phrasebookOpenText}>Open phrasebook</Text>
-          <MaterialCommunityIcons name="arrow-right" size={14} color={COLOR.tealBright} />
-        </View>
       </View>
-
       <View style={styles.phrasebookCardDeco} pointerEvents="none">
         <View style={styles.decoCircleOuter}>
           <View style={styles.decoCircleInner}>
@@ -212,7 +213,7 @@ export default function HomeScreen() {
             <Text style={styles.headerName}>{firstName}</Text>
           </View>
           <TouchableOpacity style={styles.headerAvatar}>
-            <MaterialCommunityIcons name="account-outline" size={22} color={COLOR.white} />
+            <MaterialCommunityIcons name="account" size={22} color={COLOR.white} />
           </TouchableOpacity>
         </View>
       </Animated.View>
@@ -245,25 +246,18 @@ export default function HomeScreen() {
               onPress={() => navigation.navigate('History')}
             />
             <QuickActionCard
-              icon="bookmark-outline"
+              icon="bookmark"
               label="Saved Signs"
               sublabel="Your bookmarked phrases"
               tint={{ bg: 'rgba(245,158,11,0.10)', border: 'rgba(245,158,11,0.20)', icon: '#D97706' }}
               onPress={() => navigation.navigate('SavedSigns')}
             />
             <QuickActionCard
-              icon="school-outline"
+              icon="school"
               label="Learn FSL"
               sublabel="Practice signs at your pace"
               tint={{ bg: 'rgba(99,102,241,0.10)', border: 'rgba(99,102,241,0.20)', icon: '#6366F1' }}
               onPress={() => navigation.navigate('Learn')}
-            />
-            <QuickActionCard
-              icon="cog-outline"
-              label="Settings"
-              sublabel="App & accessibility options"
-              tint={{ bg: 'rgba(100,116,139,0.10)', border: 'rgba(100,116,139,0.20)', icon: '#64748B' }}
-              onPress={() => navigation.navigate('Settings')}
             />
           </View>
         </Animated.View>

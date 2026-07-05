@@ -450,7 +450,7 @@ export default function SignTranslatorScreen() {
           <View style={styles.cardHeader}>
             <View style={styles.cardTitleRow}>
               <View style={styles.historyIconWrap}>
-                <MaterialCommunityIcons name="video" size={20} color={COLOR.tealDeep} />
+                <MaterialCommunityIcons name="camera" size={20} color={COLOR.tealDeep} />
               </View>
               <View>
                 <Text style={styles.cardTitle}>Camera Input</Text>
