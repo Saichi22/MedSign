@@ -11,6 +11,7 @@
   },
   "dependencies": {
     "@mdi/react": "^1.6.1",
+    "@mhpdev/react-native-speech": "^1.4.1",
     "@react-native-async-storage/async-storage": "^2.2.0",
     "@react-native-firebase/app": "^23.8.6",
     "@react-native-firebase/auth": "^23.8.6",

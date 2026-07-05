@@ -11,6 +11,7 @@ import { Camera, useCameraDevice, useCameraPermission } from 'react-native-visio
 import { useTensorflowModel } from 'react-native-fast-tflite';
 import RNFS from 'react-native-fs';
 import { Images } from 'react-native-nitro-image';
+import Speech from '@mhpdev/react-native-speech';
 
 // Enable LayoutAnimation on Android
 if (Platform.OS === 'android') {
@@ -33,6 +34,7 @@ const CONF_THRESHOLD  = 0.40;
 const THROTTLE_MS     = 400;
 const CONFIRM_FRAMES  = 1;
 const INPUT_SIZE      = 640;
+const MEDICAL_TERMS_START_INDEX = 48;
 
 interface SignDetection { label: string; confidence: number; }
 
@@ -137,6 +139,15 @@ function findBestDetection(output: Float32Array): { classIdx: number; score: num
   return bestClass >= 0 ? { classIdx: bestClass, score: bestScore } : null;
 }
 
+// Ai Voice
+function toSpeechText(label: string): string {
+  // "I_love_you" -> "I love you", "I_hate_you" -> "I hate you"
+  return label.replace(/_/g, ' ');
+}
+function isMedicalLabel(label: string): boolean {
+  return SIGN_LABELS.indexOf(label) >= MEDICAL_TERMS_START_INDEX;
+}
+
 // ─── Hook Implementation ─────────────────────────────────────────────────────
 export function useSignTranslator() {
   const { hasPermission, requestPermission } = useCameraPermission();
@@ -153,8 +164,61 @@ export function useSignTranslator() {
   const cardOpacity = useRef(new Animated.Value(0)).current;
   const cardScale = useRef(new Animated.Value(0.85)).current;
 
-  const model = useTensorflowModel(require('../../../../assets/besta_float16.tflite'), []);
+  const model = useTensorflowModel(require('../assets/besta_float16.tflite'), []);
   const isModelReady = model.state === 'loaded';
+
+  const lastSpokenLabelRef = useRef<string | null>(null);
+  const supportsFilipinoRef = useRef<boolean>(false);
+  const [isVoiceEnabled, setIsVoiceEnabled] = useState(true);
+
+  // Detect once whether the device actually has a Filipino voice installed.
+// Falls back to English pronunciation for medical terms if not — better
+// than silently failing or crashing on speak().
+useEffect(() => {
+  Speech.getAvailableVoices('fil')
+    .then(voices => { supportsFilipinoRef.current = voices.length > 0; })
+    .catch(() => { supportsFilipinoRef.current = false; });
+}, []);
+
+useEffect(() => {
+  Speech.configure({
+    rate: 0.85,
+    pitch: 1.0,
+    ducking: true, // lowers other app audio while speaking
+  });
+  return () => { Speech.stop(); };
+}, []);
+
+// Speak exactly once per newly confirmed sign
+useEffect(() => {
+  if (!isVoiceEnabled) return;
+
+  if (!detection) {
+    lastSpokenLabelRef.current = null;
+    return;
+  }
+  if (detection.label === lastSpokenLabelRef.current) return;
+  lastSpokenLabelRef.current = detection.label;
+
+  const language = isMedicalLabel(detection.label) && supportsFilipinoRef.current
+    ? 'fil-PH'
+    : 'en-US';
+
+  Speech.stop()
+    .catch(() => {})
+    .finally(() => {
+      Speech.speak(toSpeechText(detection.label), { language }).catch(e =>
+        console.warn('[SignTranslator] speech error:', e)
+      );
+    });
+}, [detection, isVoiceEnabled]);
+
+const toggleVoice = useCallback(() => {
+  setIsVoiceEnabled(prev => {
+    if (prev) Speech.stop();
+    return !prev;
+  });
+}, []);
 
   useEffect(() => {
     console.log('[SignTranslator] model state:', model.state, (model as any).error ?? '');
@@ -250,13 +314,15 @@ export function useSignTranslator() {
 
   // UI Handlers
   const toggleDetection = useCallback(() => {
-    LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
-    setIsDetecting(prev => {
-      if (prev) setDetection(null);
-      return !prev;
-    });
-  }, []);
-
+      LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+  setIsDetecting(prev => {
+    if (prev) {
+      setDetection(null);
+      Speech.stop();
+    }
+    return !prev;
+  });
+}, []);
   return {
     hasPermission,
     requestPermission,
@@ -269,5 +335,7 @@ export function useSignTranslator() {
     cardOpacity,
     cardScale,
     toggleDetection,
+     isVoiceEnabled,   // add
+  toggleVoice,   
   };
 }
