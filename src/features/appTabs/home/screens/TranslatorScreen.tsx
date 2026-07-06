@@ -1,13 +1,24 @@
 /**
  * SignTranslatorScreen.tsx
  *
- * Sign language translation screen — now driven by the shared
+ * Sign language translation screen — driven by the shared
  * `useSignTranslator` hook so camera, model, inference, AND voice output
- * all come from a single source of truth (no more duplicate logic that
- * silently drifts, like the missing Speech.speak() call this replaces).
+ * all come from a single source of truth.
+ *
+ * Perf notes vs the previous version:
+ * - The Camera preview, the model-status banner, and the detection card
+ *   are split into memoized subcomponents. `detection` updates many
+ *   times per second during a live session; without isolation, every
+ *   update re-rendered the whole tree including the <Camera> view.
+ *   Now only the small piece that actually depends on `detection`
+ *   re-renders.
+ * - Inline style object literals moved to StyleSheet.create so they
+ *   aren't reallocated on every render.
+ * - `isMedicalSign` is memoized off of `detection?.label` instead of
+ *   being recomputed on every render regardless of whether it changed.
  */
 
-import React from 'react';
+import React, { useMemo } from 'react';
 import {
   ScrollView,
   StatusBar,
@@ -17,14 +28,136 @@ import {
   View,
   Animated,
 } from 'react-native';
-import { Camera } from 'react-native-vision-camera';
+import { Camera, CameraDevice } from 'react-native-vision-camera';
 import MaterialCommunityIcons from 'react-native-vector-icons/MaterialCommunityIcons';
 
 import { COLOR } from '../../../../styles/colors/theme';
 import { styles } from '../../../../styles/colors/TranslatorScreenStyle';
-import { useSignTranslator, SIGN_LABELS } from '../../../../hooks/useSignDetector';
+import { useSignTranslator, isMedicalLabel } from '../../../../hooks/useSignDetector';
 
-const MEDICAL_TERMS_START_INDEX = 48;
+// ---- local styles for the bits that were previously inline objects ----
+const localStyles = StyleSheet.create({
+  headerRightRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  flexFill: {
+    flex: 1,
+  },
+});
+
+// ---------------------------------------------------------------------
+// Memoized subcomponents
+// ---------------------------------------------------------------------
+
+type CameraViewProps = {
+  cameraRef: React.RefObject<Camera>;
+  device: CameraDevice;
+};
+
+/** Isolated so `detection` updates elsewhere never re-render the camera. */
+const CameraView = React.memo(function CameraView({ cameraRef, device }: CameraViewProps) {
+  return (
+    <View style={styles.viewfinderWrap}>
+      <Camera
+        ref={cameraRef}
+        style={StyleSheet.absoluteFill}
+        device={device}
+        isActive={true}
+        photo={true}
+        pixelFormat="yuv"
+      />
+      <View style={styles.scanlineOverlay} pointerEvents="none" />
+      <View style={[styles.corner, styles.cornerTL]} pointerEvents="none" />
+      <View style={[styles.corner, styles.cornerTR]} pointerEvents="none" />
+      <View style={[styles.corner, styles.cornerBL]} pointerEvents="none" />
+      <View style={[styles.corner, styles.cornerBR]} pointerEvents="none" />
+    </View>
+  );
+});
+
+type ModelBannerProps = {
+  modelState: string;
+};
+
+const ModelBanner = React.memo(function ModelBanner({ modelState }: ModelBannerProps) {
+  const isError = modelState === 'error';
+  return (
+    <View style={[styles.bannerCard, isError && styles.bannerCardError]}>
+      <View style={[styles.bannerIconWrap, isError && styles.bannerIconWrapError]}>
+        <MaterialCommunityIcons
+          name={isError ? 'alert-circle' : 'circle-slice-2'}
+          size={16}
+          color={isError ? COLOR.red : COLOR.amber}
+        />
+      </View>
+      <Text style={[styles.bannerText, isError && styles.bannerTextError]}>
+        {isError ? 'Model setup failed' : 'Optimizing translation engine…'}
+      </Text>
+    </View>
+  );
+});
+
+type Detection = {
+  label: string;
+  confidence: number;
+};
+
+type DetectionCardProps = {
+  detection: Detection | null;
+  isDetecting: boolean;
+  isMedicalSign: boolean;
+  cardOpacity: Animated.Value;
+  cardScale: Animated.Value;
+};
+
+const DetectionCard = React.memo(function DetectionCard({
+  detection,
+  isDetecting,
+  isMedicalSign,
+  cardOpacity,
+  cardScale,
+}: DetectionCardProps) {
+  if (!detection) {
+    return (
+      <View style={styles.outputBox}>
+        <View style={styles.outputIconWrap}>
+          <MaterialCommunityIcons name="text-to-speech" size={20} color={COLOR.tealDeep} />
+        </View>
+        <Text style={styles.outputTextMuted}>
+          {isDetecting ? 'Awaiting sign inputs…' : 'Start session to begin translations'}
+        </Text>
+      </View>
+    );
+  }
+
+  return (
+    <Animated.View style={{ opacity: cardOpacity, transform: [{ scale: cardScale }] }}>
+      <Text style={styles.sectionLabel}>DETECTED SIGN</Text>
+      <Text style={styles.predictionLabel}>{detection.label}</Text>
+
+      {isMedicalSign && (
+        <View style={styles.medicalTag}>
+          <MaterialCommunityIcons name="heart-pulse" size={12} color={COLOR.amber} />
+          <Text style={styles.medicalTagText}>Medical Terminology</Text>
+        </View>
+      )}
+
+      <View style={styles.predictionMeta}>
+        <Text style={styles.predictionConf}>
+          Confidence: {Math.round(detection.confidence * 100)}%
+        </Text>
+        <View style={styles.confidenceTrack}>
+          <View style={[styles.confidenceFill, { width: `${detection.confidence * 100}%` }]} />
+        </View>
+      </View>
+    </Animated.View>
+  );
+});
+
+// ---------------------------------------------------------------------
+// Main screen
+// ---------------------------------------------------------------------
 
 export default function SignTranslatorScreen() {
   const {
@@ -42,6 +175,12 @@ export default function SignTranslatorScreen() {
     isVoiceEnabled,
     toggleVoice,
   } = useSignTranslator();
+
+  // Only recompute when the detected label actually changes.
+  const isMedicalSign = useMemo(
+    () => !!detection && isMedicalLabel(detection.label),
+    [detection?.label],
+  );
 
   if (!hasPermission) {
     return (
@@ -72,8 +211,6 @@ export default function SignTranslatorScreen() {
     );
   }
 
-  const isMedicalSign = !!detection && SIGN_LABELS.indexOf(detection.label) >= MEDICAL_TERMS_START_INDEX;
-
   return (
     <View style={styles.root}>
       <StatusBar barStyle="light-content" backgroundColor={COLOR.tealDeep} />
@@ -90,7 +227,7 @@ export default function SignTranslatorScreen() {
             <Text style={styles.headerEyebrow}>LIVE TRANSLATION</Text>
             <Text style={styles.headerTitle}>Sign Language</Text>
           </View>
-          <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+          <View style={localStyles.headerRightRow}>
             {/* Voice mute/unmute toggle */}
             <TouchableOpacity
               onPress={toggleVoice}
@@ -115,24 +252,11 @@ export default function SignTranslatorScreen() {
       </View>
 
       <ScrollView
-        style={{ flex: 1 }}
+        style={localStyles.flexFill}
         contentContainerStyle={styles.scrollContent}
         showsVerticalScrollIndicator={false}
       >
-        {!isModelReady && (
-          <View style={[styles.bannerCard, modelState === 'error' && styles.bannerCardError]}>
-            <View style={[styles.bannerIconWrap, modelState === 'error' && styles.bannerIconWrapError]}>
-              <MaterialCommunityIcons
-                name={modelState === 'error' ? 'alert-circle' : 'circle-slice-2'}
-                size={16}
-                color={modelState === 'error' ? COLOR.red : COLOR.amber}
-              />
-            </View>
-            <Text style={[styles.bannerText, modelState === 'error' && styles.bannerTextError]}>
-              {modelState === 'error' ? 'Model setup failed' : 'Optimizing translation engine…'}
-            </Text>
-          </View>
-        )}
+        {!isModelReady && <ModelBanner modelState={modelState} />}
 
         <View style={[styles.card, isMedicalSign && styles.cardMedical]}>
           <View style={styles.cardHeader}>
@@ -147,55 +271,17 @@ export default function SignTranslatorScreen() {
             </View>
           </View>
 
-          <View style={styles.viewfinderWrap}>
-            <Camera
-              ref={cameraRef}
-              style={StyleSheet.absoluteFill}
-              device={device}
-              isActive={true}
-              photo={true}
-              pixelFormat="yuv"
-            />
-            <View style={styles.scanlineOverlay} pointerEvents="none" />
-            <View style={[styles.corner, styles.cornerTL]} pointerEvents="none" />
-            <View style={[styles.corner, styles.cornerTR]} pointerEvents="none" />
-            <View style={[styles.corner, styles.cornerBL]} pointerEvents="none" />
-            <View style={[styles.corner, styles.cornerBR]} pointerEvents="none" />
-          </View>
+          <CameraView cameraRef={cameraRef} device={device} />
         </View>
 
         <View style={styles.card}>
-          {!detection ? (
-            <View style={styles.outputBox}>
-              <View style={styles.outputIconWrap}>
-                <MaterialCommunityIcons name="text-to-speech" size={20} color={COLOR.tealDeep} />
-              </View>
-              <Text style={styles.outputTextMuted}>
-                {isDetecting ? 'Awaiting sign inputs…' : 'Start session to begin translations'}
-              </Text>
-            </View>
-          ) : (
-            <Animated.View style={{ opacity: cardOpacity, transform: [{ scale: cardScale }] }}>
-              <Text style={styles.sectionLabel}>DETECTED SIGN</Text>
-              <Text style={styles.predictionLabel}>{detection.label}</Text>
-
-              {isMedicalSign && (
-                <View style={styles.medicalTag}>
-                  <MaterialCommunityIcons name="heart-pulse" size={12} color={COLOR.amber} />
-                  <Text style={styles.medicalTagText}>Medical Terminology</Text>
-                </View>
-              )}
-
-              <View style={styles.predictionMeta}>
-                <Text style={styles.predictionConf}>
-                  Confidence: {Math.round(detection.confidence * 100)}%
-                </Text>
-                <View style={styles.confidenceTrack}>
-                  <View style={[styles.confidenceFill, { width: `${detection.confidence * 100}%` }]} />
-                </View>
-              </View>
-            </Animated.View>
-          )}
+          <DetectionCard
+            detection={detection}
+            isDetecting={isDetecting}
+            isMedicalSign={isMedicalSign}
+            cardOpacity={cardOpacity}
+            cardScale={cardScale}
+          />
         </View>
 
         <TouchableOpacity
