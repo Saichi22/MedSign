@@ -6,9 +6,9 @@ plugins {
 }
 
 apply from: "../../node_modules/react-native-vector-icons/fonts.gradle"
-
 react {
     autolinkLibrariesWithApp()
+    hermesCommand = "C:/Games/MedSign/node_modules/hermes-compiler/hermesc/win64-bin/hermesc.exe"
 }
 
 def enableProguardInReleaseBuilds = false

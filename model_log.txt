@@ -1,0 +1,27 @@
+--------- beginning of main
+07-08 05:27:38.191 16812 16812 I com.prt : Using generational CollectorTypeCMC GC.
+07-08 05:27:38.343 16812 16836 W com.prt : ClassLoaderContext classpath size mismatch. expected=1, found=0 (DLC[];PCL[base.apk*1625495682]{PCL[/system/framework/org.apache.http.legacy.jar*4025584831]#PCL[/system/framework/com.android.location.provider.jar*3414091812]#PCL[/system/framework/com.android.media.remotedisplay.jar*2042759013]#PCL[/system_ext/framework/androidx.window.extensions.jar*3605148666]#PCL[/system_ext/framework/androidx.window.sidecar.jar*2958050178]} | DLC[];PCL[])
+07-08 05:27:38.382 16812 16836 W com.prt : ClassLoaderContext classpath element checksum mismatch. expected=1625495682, found=838946137 (DLC[];PCL[base.apk*1625495682]{PCL[/system/framework/org.apache.http.legacy.jar*4025584831]#PCL[/system/framework/com.android.location.provider.jar*3414091812]#PCL[/system/framework/com.android.media.remotedisplay.jar*2042759013]#PCL[/system_ext/framework/androidx.window.extensions.jar*3605148666]#PCL[/system_ext/framework/androidx.window.sidecar.jar*2958050178]} | DLC[];PCL[/data/app/~~CT1LfM5gYcz0O38edwu_jg==/com.prt-Ql9hxNOX8vIDwp658JRkaw==/base.apk*838946137])
+07-08 05:27:38.582 16812 16872 E com.prt : No package ID 6a found for resource ID 0x6a0b0013.
+07-08 05:27:38.714 16812 16853 D com.prt : MiuiProcessManagerServiceStub setSchedFifo
+07-08 05:27:38.909 16812 16825 W com.prt : PerfMonitor async binderTransact :  time=288ms interface=android.hardware.ICameraServiceListener code=3
+07-08 05:27:39.025 16812 16885 I ReactNativeJS: Running "PRT"
+07-08 05:27:43.957 16812 16853 E com.prt : FrameInsert open fail: No such file or directory
+07-08 05:27:51.438 16812 16885 I ReactNativeJS: Loading react-native-worklets-core...
+07-08 05:27:51.440 16812 16885 I ReactNativeJS: Worklets loaded successfully
+07-08 05:27:51.614 16812 16820 I com.prt : Background young concurrent mark compact GC freed 5795KB AllocSpace bytes, 22(916KB) LOS objects, 37% free, 9990KB/15MB, paused 390us,1.049ms total 119.643ms
+07-08 05:27:51.644 16812 16822 W com.prt : ApkAssets: Deleting an ApkAssets object '<empty> and /data/app/~~W3xGnbfLZBTvRvMxC9KqNQ==/com.google.android.tts-ZSvww5oMJv_kHqxlHp03LQ==/base.apk' with 1 weak references
+07-08 05:27:51.645 16812 16822 W com.prt : ApkAssets: Deleting an ApkAssets object '<empty> and /data/app/~~W3xGnbfLZBTvRvMxC9KqNQ==/com.google.android.tts-ZSvww5oMJv_kHqxlHp03LQ==/split_config.arm64_v8a.apk' with 1 weak references
+07-08 05:27:51.645 16812 16822 W com.prt : ApkAssets: Deleting an ApkAssets object '<empty> and /data/app/~~W3xGnbfLZBTvRvMxC9KqNQ==/com.google.android.tts-ZSvww5oMJv_kHqxlHp03LQ==/split_config.en.apk' with 1 weak references
+07-08 05:27:51.645 16812 16822 W com.prt : ApkAssets: Deleting an ApkAssets object '<empty> and /data/app/~~W3xGnbfLZBTvRvMxC9KqNQ==/com.google.android.tts-ZSvww5oMJv_kHqxlHp03LQ==/split_config.xxhdpi.apk' with 1 weak references
+07-08 05:27:51.977 16812 16885 W ReactNativeJS: '[SignTranslator] model load error:', [Error: TfliteModule.createModel(...): Value is a string, expected an Object
+07-08 05:27:51.977 16812 16885 W ReactNativeJS: 
+07-08 05:27:51.977 16812 16885 W ReactNativeJS: Error: Value is a string, expected an Object
+07-08 05:27:51.977 16812 16885 W ReactNativeJS:     at createModel (native)
+07-08 05:27:51.977 16812 16885 W ReactNativeJS:     at ?anon_0_ (address at index.android.bundle:1:1319733)
+07-08 05:27:51.977 16812 16885 W ReactNativeJS:     at next (native)
+07-08 05:27:51.977 16812 16885 W ReactNativeJS:     at asyncGeneratorStep (address at index.android.bundle:1:606170)
+07-08 05:27:51.977 16812 16885 W ReactNativeJS:     at _next (address at index.android.bundle:1:1347134)
+07-08 05:27:51.977 16812 16885 W ReactNativeJS:     at tryCallOne (address at InternalBytecode.js:1:1274)
+07-08 05:27:51.977 16812 16885 W ReactNativeJS:     at anonymous (address at InternalBytecode.js:1:4865)]
+07-08 05:27:52.215 16812 16820 I com.prt : Background concurrent mark compact GC freed 965KB AllocSpace bytes, 3(5396KB) LOS objects, 50% free, 19MB/39MB, paused 310us,853us total 270.405ms

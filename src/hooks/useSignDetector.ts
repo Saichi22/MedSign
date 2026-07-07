@@ -48,9 +48,9 @@
  */
 
 import { useState, useRef, useEffect, useCallback } from 'react';
-import { Animated, Easing, LayoutAnimation, Platform, UIManager } from 'react-native';
+import { Animated, Easing, Image, LayoutAnimation, Platform, UIManager } from 'react-native';
 import { Camera, useCameraDevice, useCameraFormat, useCameraPermission } from 'react-native-vision-camera';
-import { useTensorflowModel } from 'react-native-fast-tflite';
+import { loadTensorflowModel, TensorflowModel } from 'react-native-fast-tflite';
 import RNFS from 'react-native-fs';
 import { Images } from 'react-native-nitro-image';
 import Speech from '@mhpdev/react-native-speech';
@@ -276,13 +276,6 @@ export function useSignTranslator() {
   const { hasPermission, requestPermission } = useCameraPermission();
   const device = useCameraDevice('front');
 
-  // Constrain the actual capture resolution close to what the model
-  // needs (INPUT_SIZE x INPUT_SIZE) instead of the device's full native
-  // photo resolution. `takePhoto()` decodes a full native bitmap on
-  // every call — without this, that's often 8-12MP per frame at
-  // ~2.5 frames/sec, which is the real source of the memory pressure
-  // that leads to a crash after a few minutes (see file-level comment).
-  // vision-camera will pick the closest supported format to this target.
   const format = useCameraFormat(device, [
     { photoResolution: { width: INPUT_SIZE, height: INPUT_SIZE } },
   ]);
@@ -298,16 +291,58 @@ export function useSignTranslator() {
   const cardOpacity = useRef(new Animated.Value(0)).current;
   const cardScale = useRef(new Animated.Value(0.85)).current;
 
-  const model = useTensorflowModel(require('../assets/besta_float16.tflite'), []);
-  const isModelReady = model.state === 'loaded';
+  // ─── Manual model loading (bypasses useTensorflowModel's require()   ───
+  // ─── asset resolution, which hits a native HybridAssetLoader bug in ───
+  // ─── release builds: it resolves .tflite requires to a bare Android ───
+  // ─── resource name with no scheme, which java.net.URL rejects with  ───
+  // ─── "no protocol". Resolving via Image.resolveAssetSource + copying ───
+  // ─── to a real file:// path sidesteps that resolver entirely.       ───
+  const [model, setModel] = useState<TensorflowModel | null>(null);
+  const [modelState, setModelState] = useState<'loading' | 'loaded' | 'error'>('loading');
+  const [modelError, setModelError] = useState<unknown>(null);
+
+  useEffect(() => {
+  let cancelled = false;
+
+  (async () => {
+    try {
+      setModelState('loading');
+
+      const localPath = `${RNFS.CachesDirectoryPath}/besta_float16.tflite`;
+      const alreadyCached = await RNFS.exists(localPath);
+
+      if (!alreadyCached) {
+        // Reads directly from android/app/src/main/assets/besta_float16.tflite
+        // (a plain Android asset, NOT Metro's JS asset registry) and copies
+        // it to a real filesystem path fast-tflite can open via file://.
+        await RNFS.copyFileAssets('besta_float16.tflite', localPath);
+      }
+
+      const loaded = await loadTensorflowModel({ url: `file://${localPath}` }, []);
+
+      if (!cancelled) {
+        setModel(loaded);
+        setModelState('loaded');
+      }
+    } catch (e) {
+      if (!cancelled) {
+        setModelError(e);
+        setModelState('error');
+        console.warn('[SignTranslator] model load error:', e);
+      }
+    }
+  })();
+
+  return () => { cancelled = true; };
+}, []);
+
+  const isModelReady = modelState === 'loaded';
+  // ─── end manual model loading ───────────────────────────────────────
 
   const lastSpokenLabelRef = useRef<string | null>(null);
   const supportsFilipinoRef = useRef<boolean>(false);
   const [isVoiceEnabled, setIsVoiceEnabled] = useState(true);
 
-  // Detect once whether the device actually has a Filipino voice installed.
-  // Falls back to English pronunciation for medical terms if not — better
-  // than silently failing or crashing on speak().
   useEffect(() => {
     Speech.getAvailableVoices('fil')
       .then(voices => { supportsFilipinoRef.current = voices.length > 0; })
@@ -318,15 +353,13 @@ export function useSignTranslator() {
     Speech.configure({
       rate: 0.85,
       pitch: 1.0,
-      ducking: true, // lowers other app audio while speaking
+      ducking: true,
     });
     return () => { Speech.stop(); };
   }, []);
 
-  // Speak exactly once per newly confirmed sign
   useEffect(() => {
     if (!isVoiceEnabled) return;
-
     if (!detection) {
       lastSpokenLabelRef.current = null;
       return;
@@ -355,11 +388,6 @@ export function useSignTranslator() {
   }, []);
 
   useEffect(() => {
-    console.log('[SignTranslator] model state:', model.state, (model as any).error ?? '');
-  }, [model.state]);
-
-  // Card animation
-  useEffect(() => {
     if (detection) {
       Animated.parallel([
         Animated.timing(cardOpacity, {
@@ -373,13 +401,10 @@ export function useSignTranslator() {
     }
   }, [detection, cardOpacity, cardScale]);
 
-  // Inference Step
   const runOnce = useCallback(async () => {
-    if (busyRef.current || !cameraRef.current || !model.model) return;
+    if (busyRef.current || !cameraRef.current || !model) return;
     busyRef.current = true;
 
-    // Declared here so the outer `finally` can always reach it,
-    // regardless of which line inside the try throws.
     let photoPath: string | null = null;
 
     try {
@@ -390,10 +415,6 @@ export function useSignTranslator() {
       const rawOrientation = (photo as any).orientation;
       const exifOrientation = (photo as any).metadata?.Orientation ?? (photo as any).metadata?.orientation;
 
-      // `image` holds a native bitmap decoded at the (now format-constrained,
-      // see `format` above) capture resolution. It has no manual dispose API —
-      // it's a plain local reference and goes out of scope at the end of this
-      // function, so the JS/native GC can reclaim it once nothing references it.
       const image = await Images.loadFromFileAsync(filePath);
       const rawPixelData = await image.toRawPixelData();
       const srcW = image.width;
@@ -405,8 +426,8 @@ export function useSignTranslator() {
       const rotationDeg = getRotationDeg(rawOrientation, exifOrientation, srcW, srcH);
       const float32Input = resizeToFloat32(srcPixels, srcW, srcH, inferredChannels, rotationDeg, MIRROR_FRONT_CAMERA);
 
-      if (!model.model) return;
-      const outputs = model.model.runSync([float32Input.buffer as ArrayBuffer]);
+      if (!model) return;
+      const outputs = model.runSync([float32Input.buffer as ArrayBuffer]);
       const output = new Float32Array(outputs[0]);
 
       const result = findBestDetection(output);
@@ -430,17 +451,13 @@ export function useSignTranslator() {
     } catch (e) {
       console.warn('[SignTranslator] inference error:', e);
     } finally {
-      // Guaranteed cleanup of the captured photo's temp file — previously
-      // this was skipped entirely whenever anything above it threw,
-      // leaking a temp file per failed frame.
       if (photoPath) {
         await RNFS.unlink(photoPath).catch(e => console.warn('[SignTranslator] unlink failed:', e));
       }
       busyRef.current = false;
     }
-  }, [model.model]);
+  }, [model]);
 
-  // Inference loop control
   useEffect(() => {
     if (!isDetecting || !isModelReady) return;
 
@@ -455,12 +472,10 @@ export function useSignTranslator() {
     };
   }, [isDetecting, isModelReady, runOnce]);
 
-  // Permissions Check
   useEffect(() => {
     if (!hasPermission) requestPermission();
   }, [hasPermission, requestPermission]);
 
-  // UI Handlers
   const toggleDetection = useCallback(() => {
     LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
     setIsDetecting(prev => {
@@ -480,7 +495,7 @@ export function useSignTranslator() {
     isDetecting,
     detection,
     isModelReady,
-    modelState: model.state,
+    modelState,
     cameraRef,
     cardOpacity,
     cardScale,
