@@ -26,20 +26,30 @@
  *   next frame's resize/detect call happens, the previous buffer
  *   contents have already been consumed.
  *
- * - `runOnce` now explicitly releases the native `Image` returned by
- *   `Images.loadFromFileAsync` as soon as we're done reading pixels
- *   out of it, and guarantees the captured photo's temp file always
- *   gets unlinked, even on error. Previously neither was guaranteed:
- *   the native bitmap backing `image` was only reachable via a JS
- *   wrapper the whole native buffer, so it never got GCed under memory
- *   pressure, and `RNFS.unlink` was skipped entirely if anything threw
- *   before that line — at ~2.5 photos/sec that leaked enough native
- *   memory and temp files to crash the app within a few minutes.
+ * - `react-native-nitro-image`'s `Image` type has no manual dispose/
+ *   release/close method — checked its `.d.ts` directly. It's a
+ *   `HybridObject`, and Nitro's design intentionally relies on the JS
+ *   GC being informed of native memory size rather than exposing a
+ *   manual lifecycle hook. So the fix isn't "release it sooner" — it's
+ *   "make it smaller". `takePhoto()` was capturing at the device's
+ *   full native photo resolution (often 8-12MP on a front camera) just
+ *   to immediately downscale it to 640x640. At ~2.5 captures/sec, that
+ *   meant decoding tens of MB of native bitmap per frame — even with
+ *   GC behaving correctly, allocation can outpace collection at that
+ *   rate for long enough to blow past the OS memory ceiling within a
+ *   few minutes. `useCameraFormat` below constrains the actual capture
+ *   resolution close to what the model needs, cutting the per-frame
+ *   native allocation by an order of magnitude or more.
+ *
+ * - `runOnce` also guarantees the captured photo's temp file always
+ *   gets unlinked, even on error — previously `RNFS.unlink` was
+ *   skipped entirely if anything threw before that line, leaking a
+ *   temp file per failed frame.
  */
 
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { Animated, Easing, LayoutAnimation, Platform, UIManager } from 'react-native';
-import { Camera, useCameraDevice, useCameraPermission } from 'react-native-vision-camera';
+import { Camera, useCameraDevice, useCameraFormat, useCameraPermission } from 'react-native-vision-camera';
 import { useTensorflowModel } from 'react-native-fast-tflite';
 import RNFS from 'react-native-fs';
 import { Images } from 'react-native-nitro-image';
@@ -110,28 +120,6 @@ function getRotationDeg(
     return bufferIsLandscape ? ASSUMED_LANDSCAPE_DIRECTION : (claimed ?? 0);
   }
   return claimed ?? (bufferIsLandscape ? ASSUMED_LANDSCAPE_DIRECTION : 0);
-}
-
-// Best-effort native release for a NitroImage `Image` instance. The
-// public API surface differs across versions/forks of image libraries
-// (dispose / release / close / destroy are all common names), and some
-// versions may not expose any manual release at all and rely purely on
-// GC. Try the known method names, and no-op silently if none exist —
-// this must never throw, since it always runs from a `finally` block.
-function releaseNativeImage(image: unknown): void {
-  if (!image || typeof image !== 'object') return;
-  const candidates = ['dispose', 'release', 'close', 'destroy'] as const;
-  for (const method of candidates) {
-    const fn = (image as Record<string, unknown>)[method];
-    if (typeof fn === 'function') {
-      try {
-        (fn as () => void).call(image);
-      } catch (e) {
-        console.warn(`[SignTranslator] failed to release native image via ${method}():`, e);
-      }
-      return;
-    }
-  }
 }
 
 // Reused across calls to avoid allocating a ~4.9MB Float32Array
@@ -288,6 +276,17 @@ export function useSignTranslator() {
   const { hasPermission, requestPermission } = useCameraPermission();
   const device = useCameraDevice('front');
 
+  // Constrain the actual capture resolution close to what the model
+  // needs (INPUT_SIZE x INPUT_SIZE) instead of the device's full native
+  // photo resolution. `takePhoto()` decodes a full native bitmap on
+  // every call — without this, that's often 8-12MP per frame at
+  // ~2.5 frames/sec, which is the real source of the memory pressure
+  // that leads to a crash after a few minutes (see file-level comment).
+  // vision-camera will pick the closest supported format to this target.
+  const format = useCameraFormat(device, [
+    { photoResolution: { width: INPUT_SIZE, height: INPUT_SIZE } },
+  ]);
+
   const [isDetecting, setIsDetecting] = useState(false);
   const [detection, setDetection] = useState<SignDetection | null>(null);
 
@@ -379,10 +378,9 @@ export function useSignTranslator() {
     if (busyRef.current || !cameraRef.current || !model.model) return;
     busyRef.current = true;
 
-    // Declared here so the outer `finally` can always reach them,
+    // Declared here so the outer `finally` can always reach it,
     // regardless of which line inside the try throws.
     let photoPath: string | null = null;
-    let nativeImage: unknown = null;
 
     try {
       const photo = await cameraRef.current.takePhoto({ flash: 'off' });
@@ -392,9 +390,11 @@ export function useSignTranslator() {
       const rawOrientation = (photo as any).orientation;
       const exifOrientation = (photo as any).metadata?.Orientation ?? (photo as any).metadata?.orientation;
 
+      // `image` holds a native bitmap decoded at the (now format-constrained,
+      // see `format` above) capture resolution. It has no manual dispose API —
+      // it's a plain local reference and goes out of scope at the end of this
+      // function, so the JS/native GC can reclaim it once nothing references it.
       const image = await Images.loadFromFileAsync(filePath);
-      nativeImage = image; // tracked so `finally` can release it even if a later line throws
-
       const rawPixelData = await image.toRawPixelData();
       const srcW = image.width;
       const srcH = image.height;
@@ -404,11 +404,6 @@ export function useSignTranslator() {
 
       const rotationDeg = getRotationDeg(rawOrientation, exifOrientation, srcW, srcH);
       const float32Input = resizeToFloat32(srcPixels, srcW, srcH, inferredChannels, rotationDeg, MIRROR_FRONT_CAMERA);
-
-      // Pixels are already copied into float32Input — release the native
-      // image now instead of waiting for GC, since we're fully done with it.
-      releaseNativeImage(nativeImage);
-      nativeImage = null;
 
       if (!model.model) return;
       const outputs = model.model.runSync([float32Input.buffer as ArrayBuffer]);
@@ -435,9 +430,6 @@ export function useSignTranslator() {
     } catch (e) {
       console.warn('[SignTranslator] inference error:', e);
     } finally {
-      // Belt-and-suspenders: if we bailed out before the explicit release
-      // above (e.g. toRawPixelData threw), still release the native image.
-      releaseNativeImage(nativeImage);
       // Guaranteed cleanup of the captured photo's temp file — previously
       // this was skipped entirely whenever anything above it threw,
       // leaking a temp file per failed frame.
@@ -484,6 +476,7 @@ export function useSignTranslator() {
     hasPermission,
     requestPermission,
     device,
+    format,
     isDetecting,
     detection,
     isModelReady,

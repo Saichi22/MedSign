@@ -16,6 +16,12 @@
  *   aren't reallocated on every render.
  * - `isMedicalSign` is memoized off of `detection?.label` instead of
  *   being recomputed on every render regardless of whether it changed.
+ * - `<Camera>` now receives the `format` computed in `useSignTranslator`
+ *   (constrained close to the model's 640x640 input) instead of
+ *   capturing at the device's full native photo resolution. See the
+ *   comment above `format` in useSignDetector.ts for why this matters —
+ *   it's what stops the app from running out of memory after a few
+ *   minutes of live translation.
  */
 
 import React, { useMemo } from 'react';
@@ -28,7 +34,7 @@ import {
   View,
   Animated,
 } from 'react-native';
-import { Camera, CameraDevice } from 'react-native-vision-camera';
+import { Camera, CameraDevice, CameraDeviceFormat } from 'react-native-vision-camera';
 import MaterialCommunityIcons from 'react-native-vector-icons/MaterialCommunityIcons';
 
 import { COLOR } from '../../../../styles/colors/theme';
@@ -51,18 +57,20 @@ const localStyles = StyleSheet.create({
 // ---------------------------------------------------------------------
 
 type CameraViewProps = {
-  cameraRef: React.RefObject<Camera>;
+  cameraRef: React.RefObject<Camera | null>;
   device: CameraDevice;
+  format: CameraDeviceFormat | undefined;
 };
 
 /** Isolated so `detection` updates elsewhere never re-render the camera. */
-const CameraView = React.memo(function CameraView({ cameraRef, device }: CameraViewProps) {
+const CameraView = React.memo(function CameraView({ cameraRef, device, format }: CameraViewProps) {
   return (
     <View style={styles.viewfinderWrap}>
       <Camera
         ref={cameraRef}
         style={StyleSheet.absoluteFill}
         device={device}
+        format={format}
         isActive={true}
         photo={true}
         pixelFormat="yuv"
@@ -164,6 +172,7 @@ export default function SignTranslatorScreen() {
     hasPermission,
     requestPermission,
     device,
+    format,
     isDetecting,
     detection,
     isModelReady,
@@ -271,7 +280,7 @@ export default function SignTranslatorScreen() {
             </View>
           </View>
 
-          <CameraView cameraRef={cameraRef} device={device} />
+          <CameraView cameraRef={cameraRef} device={device} format={format} />
         </View>
 
         <View style={styles.card}>
