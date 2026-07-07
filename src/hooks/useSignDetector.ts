@@ -1,5 +1,5 @@
 /**
- * useSignTranslator.ts
+ * useSignDetector.ts
  *
  * Custom hook managing camera permissions, TFLite model loading,
  * image preprocessing, and the real-time inference loop.
@@ -25,6 +25,16 @@
  *   because `model.model.runSync` is synchronous — by the time the
  *   next frame's resize/detect call happens, the previous buffer
  *   contents have already been consumed.
+ *
+ * - `runOnce` now explicitly releases the native `Image` returned by
+ *   `Images.loadFromFileAsync` as soon as we're done reading pixels
+ *   out of it, and guarantees the captured photo's temp file always
+ *   gets unlinked, even on error. Previously neither was guaranteed:
+ *   the native bitmap backing `image` was only reachable via a JS
+ *   wrapper the whole native buffer, so it never got GCed under memory
+ *   pressure, and `RNFS.unlink` was skipped entirely if anything threw
+ *   before that line — at ~2.5 photos/sec that leaked enough native
+ *   memory and temp files to crash the app within a few minutes.
  */
 
 import { useState, useRef, useEffect, useCallback } from 'react';
@@ -100,6 +110,28 @@ function getRotationDeg(
     return bufferIsLandscape ? ASSUMED_LANDSCAPE_DIRECTION : (claimed ?? 0);
   }
   return claimed ?? (bufferIsLandscape ? ASSUMED_LANDSCAPE_DIRECTION : 0);
+}
+
+// Best-effort native release for a NitroImage `Image` instance. The
+// public API surface differs across versions/forks of image libraries
+// (dispose / release / close / destroy are all common names), and some
+// versions may not expose any manual release at all and rely purely on
+// GC. Try the known method names, and no-op silently if none exist —
+// this must never throw, since it always runs from a `finally` block.
+function releaseNativeImage(image: unknown): void {
+  if (!image || typeof image !== 'object') return;
+  const candidates = ['dispose', 'release', 'close', 'destroy'] as const;
+  for (const method of candidates) {
+    const fn = (image as Record<string, unknown>)[method];
+    if (typeof fn === 'function') {
+      try {
+        (fn as () => void).call(image);
+      } catch (e) {
+        console.warn(`[SignTranslator] failed to release native image via ${method}():`, e);
+      }
+      return;
+    }
+  }
 }
 
 // Reused across calls to avoid allocating a ~4.9MB Float32Array
@@ -347,24 +379,36 @@ export function useSignTranslator() {
     if (busyRef.current || !cameraRef.current || !model.model) return;
     busyRef.current = true;
 
+    // Declared here so the outer `finally` can always reach them,
+    // regardless of which line inside the try throws.
+    let photoPath: string | null = null;
+    let nativeImage: unknown = null;
+
     try {
       const photo = await cameraRef.current.takePhoto({ flash: 'off' });
+      photoPath = photo.path;
       const filePath = photo.path.startsWith('file://') ? photo.path : `file://${photo.path}`;
 
       const rawOrientation = (photo as any).orientation;
       const exifOrientation = (photo as any).metadata?.Orientation ?? (photo as any).metadata?.orientation;
 
       const image = await Images.loadFromFileAsync(filePath);
+      nativeImage = image; // tracked so `finally` can release it even if a later line throws
+
       const rawPixelData = await image.toRawPixelData();
       const srcW = image.width;
       const srcH = image.height;
-      await RNFS.unlink(photo.path).catch(e => console.warn('[SignTranslator] unlink failed:', e));
 
       const srcPixels = new Uint8Array(rawPixelData.buffer);
       const inferredChannels = Math.round(srcPixels.length / (srcW * srcH)) as 3 | 4;
 
       const rotationDeg = getRotationDeg(rawOrientation, exifOrientation, srcW, srcH);
       const float32Input = resizeToFloat32(srcPixels, srcW, srcH, inferredChannels, rotationDeg, MIRROR_FRONT_CAMERA);
+
+      // Pixels are already copied into float32Input — release the native
+      // image now instead of waiting for GC, since we're fully done with it.
+      releaseNativeImage(nativeImage);
+      nativeImage = null;
 
       if (!model.model) return;
       const outputs = model.model.runSync([float32Input.buffer as ArrayBuffer]);
@@ -391,6 +435,15 @@ export function useSignTranslator() {
     } catch (e) {
       console.warn('[SignTranslator] inference error:', e);
     } finally {
+      // Belt-and-suspenders: if we bailed out before the explicit release
+      // above (e.g. toRawPixelData threw), still release the native image.
+      releaseNativeImage(nativeImage);
+      // Guaranteed cleanup of the captured photo's temp file — previously
+      // this was skipped entirely whenever anything above it threw,
+      // leaking a temp file per failed frame.
+      if (photoPath) {
+        await RNFS.unlink(photoPath).catch(e => console.warn('[SignTranslator] unlink failed:', e));
+      }
       busyRef.current = false;
     }
   }, [model.model]);
@@ -442,4 +495,4 @@ export function useSignTranslator() {
     isVoiceEnabled,
     toggleVoice,
   };
-          }
+}
