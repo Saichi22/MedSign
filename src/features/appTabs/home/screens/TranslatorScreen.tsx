@@ -183,6 +183,8 @@ export default function SignTranslatorScreen() {
     toggleDetection,
     isVoiceEnabled,
     toggleVoice,
+    isSpelling,
+    spellBuffer,
   } = useSignTranslator();
 
   // Only recompute when the detected label actually changes.
@@ -284,6 +286,13 @@ export default function SignTranslatorScreen() {
         </View>
 
         <View style={styles.card}>
+          {isSpelling && (
+            <View style={styles.outputBox}>
+              <Text style={styles.outputTextMuted}>
+                Spelling: {spellBuffer}<Text style={{ opacity: 0.5 }}>_</Text>
+              </Text>
+            </View>
+          )}
           <DetectionCard
             detection={detection}
             isDetecting={isDetecting}

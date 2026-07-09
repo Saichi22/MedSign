@@ -1,61 +1,11 @@
-/**
- * useSignDetector.ts
- *
- * Custom hook managing camera permissions, TFLite model loading,
- * image preprocessing, and the real-time inference loop.
- *
- * Perf notes vs the previous version (both hot paths run every
- * THROTTLE_MS on the JS thread, so they matter a lot):
- *
- * - `findBestDetection` swapped its loop order. The original iterated
- *   predictions outer / classes inner, so each inner read jumped
- *   NUM_PREDICTIONS (8400) floats in memory — a cache miss on nearly
- *   every access. Classes-outer / predictions-inner makes inner reads
- *   sequential and also removes 8400x redundant offset multiplications
- *   (the per-class offset is now computed once, not once per (c, j)).
- *
- * - `resizeToFloat32` no longer recomputes the rotation/mirror
- *   transform for all 640*640 output pixels. px/py each depend on only
- *   one of the two output axes (true for every rotation case), so the
- *   transform is now precomputed into two 640-length lookup tables and
- *   the hot loop is just array reads + a divide-by-255 copy.
- *
- * - Both functions reuse a module-level output buffer instead of
- *   allocating a multi-MB Float32Array on every single frame. Safe
- *   because `model.model.runSync` is synchronous — by the time the
- *   next frame's resize/detect call happens, the previous buffer
- *   contents have already been consumed.
- *
- * - `react-native-nitro-image`'s `Image` type has no manual dispose/
- *   release/close method — checked its `.d.ts` directly. It's a
- *   `HybridObject`, and Nitro's design intentionally relies on the JS
- *   GC being informed of native memory size rather than exposing a
- *   manual lifecycle hook. So the fix isn't "release it sooner" — it's
- *   "make it smaller". `takePhoto()` was capturing at the device's
- *   full native photo resolution (often 8-12MP on a front camera) just
- *   to immediately downscale it to 640x640. At ~2.5 captures/sec, that
- *   meant decoding tens of MB of native bitmap per frame — even with
- *   GC behaving correctly, allocation can outpace collection at that
- *   rate for long enough to blow past the OS memory ceiling within a
- *   few minutes. `useCameraFormat` below constrains the actual capture
- *   resolution close to what the model needs, cutting the per-frame
- *   native allocation by an order of magnitude or more.
- *
- * - `runOnce` also guarantees the captured photo's temp file always
- *   gets unlinked, even on error — previously `RNFS.unlink` was
- *   skipped entirely if anything threw before that line, leaking a
- *   temp file per failed frame.
- */
-
 import { useState, useRef, useEffect, useCallback } from 'react';
-import { Animated, Easing, Image, LayoutAnimation, Platform, UIManager } from 'react-native';
+import { Animated, Easing, LayoutAnimation, Platform, UIManager } from 'react-native';
 import { Camera, useCameraDevice, useCameraFormat, useCameraPermission } from 'react-native-vision-camera';
 import { loadTensorflowModel, TensorflowModel } from 'react-native-fast-tflite';
 import RNFS from 'react-native-fs';
 import { Images } from 'react-native-nitro-image';
 import Speech from '@mhpdev/react-native-speech';
 
-// Enable LayoutAnimation on Android
 if (Platform.OS === 'android') {
   UIManager.setLayoutAnimationEnabledExperimental?.(true);
 }
@@ -77,10 +27,17 @@ const THROTTLE_MS     = 400;
 const CONFIRM_FRAMES  = 1;
 const INPUT_SIZE      = 640;
 
-// Exported so consumers (e.g. the screen component) don't have to
-// duplicate this constant and re-derive their own "is this a medical
-// sign" check — a second copy of this index is a drift risk.
 export const MEDICAL_TERMS_START_INDEX = 48;
+
+// Single uppercase A-Z labels are treated as spellable letters; everything
+// else (whole-word signs like "Help", "Family", and the Filipino medical
+// terms) is a complete word and bypasses spelling mode entirely.
+const LETTER_PATTERN = /^[A-Z]$/;
+function isLetterLabel(label: string): boolean {
+  return LETTER_PATTERN.test(label);
+}
+
+const SPELL_TIMEOUT_MS = 3000;
 
 interface SignDetection { label: string; confidence: number; }
 
@@ -122,10 +79,6 @@ function getRotationDeg(
   return claimed ?? (bufferIsLandscape ? ASSUMED_LANDSCAPE_DIRECTION : 0);
 }
 
-// Reused across calls to avoid allocating a ~4.9MB Float32Array
-// (INPUT_SIZE * INPUT_SIZE * 3) every ~400ms. Safe because the buffer's
-// contents are fully consumed synchronously by model.runSync() before
-// the next frame's resize call can happen.
 let resizeOutputBuffer: Float32Array | null = null;
 
 function resizeToFloat32(
@@ -144,10 +97,6 @@ function resizeToFloat32(
   const cropY0 = Math.floor((logH - cropSize) / 2);
   const scale = cropSize / INPUT_SIZE;
 
-  // lx/ly: pre-rotation logical source coordinates for each output
-  // column/row. Each depends only on x or only on y — never both — so
-  // compute them once per column and once per row instead of redoing
-  // floor/min/mirror for all 409,600 output pixels.
   const lxTable = new Int32Array(INPUT_SIZE);
   for (let x = 0; x < INPUT_SIZE; x++) {
     let lx = Math.min(Math.floor(x * scale) + cropX0, logW - 1);
@@ -159,14 +108,10 @@ function resizeToFloat32(
     lyTable[y] = Math.min(Math.floor(y * scale) + cropY0, logH - 1);
   }
 
-  // Fold the rotation transform into two final lookup tables so the hot
-  // loop below is nothing but array reads + a divide-by-255 copy — no
-  // per-pixel branching on rotationDeg.
   const pxTable = new Int32Array(INPUT_SIZE);
   const pyTable = new Int32Array(INPUT_SIZE);
 
   if (rotationDeg === 90) {
-    // px depends on the output ROW (y), py depends on the output COLUMN (x).
     for (let y = 0; y < INPUT_SIZE; y++) pxTable[y] = srcW - 1 - lyTable[y];
     for (let x = 0; x < INPUT_SIZE; x++) pyTable[x] = lxTable[x];
   } else if (rotationDeg === 270) {
@@ -186,7 +131,6 @@ function resizeToFloat32(
   const out = resizeOutputBuffer;
 
   if (swapped) {
-    // rotationDeg 90/270: px is indexed by output row, py by output column.
     for (let y = 0; y < INPUT_SIZE; y++) {
       const px = pxTable[y];
       const rowBase = y * INPUT_SIZE;
@@ -200,7 +144,6 @@ function resizeToFloat32(
       }
     }
   } else {
-    // rotationDeg 0/180: px is indexed by output column, py by output row.
     for (let y = 0; y < INPUT_SIZE; y++) {
       const py = pyTable[y];
       const rowBase = y * INPUT_SIZE;
@@ -219,7 +162,6 @@ function resizeToFloat32(
   return out;
 }
 
-// Reused across calls — same rationale as resizeOutputBuffer above.
 let maxScoreBuffer: Float32Array | null = null;
 let maxClassBuffer: Int8Array | null = null;
 
@@ -233,12 +175,6 @@ function findBestDetection(output: Float32Array): { classIdx: number; score: num
   maxScores.fill(0);
   maxClasses.fill(-1);
 
-  // Classes outer / predictions inner: each inner-loop read is
-  // sequential in memory (stride 1), and the per-class offset
-  // (c + 4) * NUM_PREDICTIONS is computed once per class instead of
-  // once per (class, prediction) pair — versus the original
-  // predictions-outer / classes-inner order, where every inner read
-  // jumped NUM_PREDICTIONS (8400) floats ahead.
   for (let c = 0; c < NUM_CLASSES; c++) {
     const classOffset = (c + 4) * NUM_PREDICTIONS;
     for (let j = 0; j < NUM_PREDICTIONS; j++) {
@@ -262,10 +198,8 @@ function findBestDetection(output: Float32Array): { classIdx: number; score: num
   return bestClass >= 0 ? { classIdx: bestClass, score: bestScore } : null;
 }
 
-// Ai Voice
 function toSpeechText(label: string): string {
-  // "I_love_you" -> "I love you", "I_hate_you" -> "I hate you"
-  return label.replace(/_/g, ' ');
+  return label.replace(/_/g, ' ').toLowerCase();
 }
 export function isMedicalLabel(label: string): boolean {
   return SIGN_LABELS.indexOf(label) >= MEDICAL_TERMS_START_INDEX;
@@ -291,53 +225,91 @@ export function useSignTranslator() {
   const cardOpacity = useRef(new Animated.Value(0)).current;
   const cardScale = useRef(new Animated.Value(0.85)).current;
 
-  // ─── Manual model loading (bypasses useTensorflowModel's require()   ───
-  // ─── asset resolution, which hits a native HybridAssetLoader bug in ───
-  // ─── release builds: it resolves .tflite requires to a bare Android ───
-  // ─── resource name with no scheme, which java.net.URL rejects with  ───
-  // ─── "no protocol". Resolving via Image.resolveAssetSource + copying ───
-  // ─── to a real file:// path sidesteps that resolver entirely.       ───
+  // ─── Spelling mode: buffers consecutive single-letter detections and
+  // ─── flushes them into one spoken word after SPELL_TIMEOUT_MS of no
+  // ─── new letters. Full-word signs are ignored while a buffer is open,
+  // ─── so a stray misdetection mid-spelling can't interrupt the word.
+  const spellBufferRef = useRef<string[]>([]);
+  const spellTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [isSpelling, setIsSpelling] = useState(false);
+  const [spellBuffer, setSpellBuffer] = useState<string>('');
+
+  const flushSpellBuffer = useCallback(() => {
+    if (spellTimerRef.current) {
+      clearTimeout(spellTimerRef.current);
+      spellTimerRef.current = null;
+    }
+    const letters = spellBufferRef.current;
+    if (letters.length === 0) {
+      setIsSpelling(false);
+      setSpellBuffer('');
+      return;
+    }
+
+    const word = letters.join('');
+    spellBufferRef.current = [];
+    setIsSpelling(false);
+    setSpellBuffer('');
+
+    // Surface the spelled word through the same `detection` card/voice
+    // path used for whole-word signs, so the UI doesn't need two code
+    // paths for "how a result gets shown."
+    setDetection({ label: word, confidence: 1 });
+  }, []);
+
+  const pushLetter = useCallback((letter: string) => {
+    spellBufferRef.current.push(letter);
+    setIsSpelling(true);
+    setSpellBuffer(spellBufferRef.current.join(''));
+
+    if (spellTimerRef.current) clearTimeout(spellTimerRef.current);
+    spellTimerRef.current = setTimeout(flushSpellBuffer, SPELL_TIMEOUT_MS);
+  }, [flushSpellBuffer]);
+
+  useEffect(() => {
+    return () => {
+      if (spellTimerRef.current) clearTimeout(spellTimerRef.current);
+    };
+  }, []);
+  // ─── end spelling mode ──────────────────────────────────────────────
+
   const [model, setModel] = useState<TensorflowModel | null>(null);
   const [modelState, setModelState] = useState<'loading' | 'loaded' | 'error'>('loading');
   const [modelError, setModelError] = useState<unknown>(null);
 
   useEffect(() => {
-  let cancelled = false;
+    let cancelled = false;
 
-  (async () => {
-    try {
-      setModelState('loading');
+    (async () => {
+      try {
+        setModelState('loading');
 
-      const localPath = `${RNFS.CachesDirectoryPath}/besta_float16.tflite`;
-      const alreadyCached = await RNFS.exists(localPath);
+        const localPath = `${RNFS.CachesDirectoryPath}/besta_float16.tflite`;
+        const alreadyCached = await RNFS.exists(localPath);
 
-      if (!alreadyCached) {
-        // Reads directly from android/app/src/main/assets/besta_float16.tflite
-        // (a plain Android asset, NOT Metro's JS asset registry) and copies
-        // it to a real filesystem path fast-tflite can open via file://.
-        await RNFS.copyFileAssets('besta_float16.tflite', localPath);
+        if (!alreadyCached) {
+          await RNFS.copyFileAssets('besta_float16.tflite', localPath);
+        }
+
+        const loaded = await loadTensorflowModel({ url: `file://${localPath}` }, []);
+
+        if (!cancelled) {
+          setModel(loaded);
+          setModelState('loaded');
+        }
+      } catch (e) {
+        if (!cancelled) {
+          setModelError(e);
+          setModelState('error');
+          console.warn('[SignTranslator] model load error:', e);
+        }
       }
+    })();
 
-      const loaded = await loadTensorflowModel({ url: `file://${localPath}` }, []);
-
-      if (!cancelled) {
-        setModel(loaded);
-        setModelState('loaded');
-      }
-    } catch (e) {
-      if (!cancelled) {
-        setModelError(e);
-        setModelState('error');
-        console.warn('[SignTranslator] model load error:', e);
-      }
-    }
-  })();
-
-  return () => { cancelled = true; };
-}, []);
+    return () => { cancelled = true; };
+  }, []);
 
   const isModelReady = modelState === 'loaded';
-  // ─── end manual model loading ───────────────────────────────────────
 
   const lastSpokenLabelRef = useRef<string | null>(null);
   const supportsFilipinoRef = useRef<boolean>(false);
@@ -350,11 +322,7 @@ export function useSignTranslator() {
   }, []);
 
   useEffect(() => {
-    Speech.configure({
-      rate: 0.85,
-      pitch: 1.0,
-      ducking: true,
-    });
+    Speech.configure({ rate: 0.85, pitch: 1.0, ducking: true });
     return () => { Speech.stop(); };
   }, []);
 
@@ -439,14 +407,28 @@ export function useSignTranslator() {
 
         const allSame = history.length === CONFIRM_FRAMES && history.every(c => c === history[0]);
         if (allSame) {
-          setDetection({
-            label: SIGN_LABELS[result.classIdx] ?? `Class_${result.classIdx}`,
-            confidence: result.score,
-          });
+          const label = SIGN_LABELS[result.classIdx] ?? `Class_${result.classIdx}`;
+
+          if (isLetterLabel(label)) {
+            // Spellable letter: buffer it and (re)start the 3s window
+            // instead of surfacing it as a standalone detection.
+            pushLetter(label);
+          } else if (spellBufferRef.current.length > 0) {
+            // A full word came in while letters are buffered — per
+            // design, ignore it so it can't interrupt an in-progress
+            // spelled word. The 3s timer keeps running unaffected.
+          } else {
+            setDetection({ label, confidence: result.score });
+          }
         }
       } else {
         historyRef.current = [];
-        setDetection(null);
+        // Only clear the live "detection" card when we're not mid-spell —
+        // clearing it here would blank the UI between individual letter
+        // captures even though the buffer is still accumulating.
+        if (spellBufferRef.current.length === 0) {
+          setDetection(null);
+        }
       }
     } catch (e) {
       console.warn('[SignTranslator] inference error:', e);
@@ -456,7 +438,7 @@ export function useSignTranslator() {
       }
       busyRef.current = false;
     }
-  }, [model]);
+  }, [model, pushLetter]);
 
   useEffect(() => {
     if (!isDetecting || !isModelReady) return;
@@ -482,6 +464,12 @@ export function useSignTranslator() {
       if (prev) {
         setDetection(null);
         Speech.stop();
+        // Stopping mid-spell: drop the in-progress buffer rather than
+        // flushing it, since the session is ending intentionally.
+        spellBufferRef.current = [];
+        if (spellTimerRef.current) clearTimeout(spellTimerRef.current);
+        setIsSpelling(false);
+        setSpellBuffer('');
       }
       return !prev;
     });
@@ -502,5 +490,8 @@ export function useSignTranslator() {
     toggleDetection,
     isVoiceEnabled,
     toggleVoice,
+    // Spelling mode UI state
+    isSpelling,
+    spellBuffer,
   };
 }
