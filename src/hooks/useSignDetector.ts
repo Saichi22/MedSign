@@ -5,6 +5,7 @@ import { loadTensorflowModel, TensorflowModel } from 'react-native-fast-tflite';
 import RNFS from 'react-native-fs';
 import { Images } from 'react-native-nitro-image';
 import Speech from '@mhpdev/react-native-speech';
+import { autocorrectSpelledWord, SpellLanguage } from '../utils/spellAutocorrect';
 
 if (Platform.OS === 'android') {
   UIManager.setLayoutAnimationEnabledExperimental?.(true);
@@ -29,9 +30,6 @@ const INPUT_SIZE      = 640;
 
 export const MEDICAL_TERMS_START_INDEX = 48;
 
-// Single uppercase A-Z labels are treated as spellable letters; everything
-// else (whole-word signs like "Help", "Family", and the Filipino medical
-// terms) is a complete word and bypasses spelling mode entirely.
 const LETTER_PATTERN = /^[A-Z]$/;
 function isLetterLabel(label: string): boolean {
   return LETTER_PATTERN.test(label);
@@ -52,7 +50,6 @@ const EXIF_ROTATION_MAP: Record<number, 0 | 90 | 180 | 270> = { 1: 0, 3: 180, 6:
 const MIRROR_FRONT_CAMERA = true;
 const ASSUMED_LANDSCAPE_DIRECTION: 90 | 270 = 90;
 
-// ─── Helper Functions ────────────────────────────────────────────────────────
 function getRotationDeg(
   orientation: string | undefined,
   exifOrientation: number | undefined,
@@ -225,14 +222,24 @@ export function useSignTranslator() {
   const cardOpacity = useRef(new Animated.Value(0)).current;
   const cardScale = useRef(new Animated.Value(0.85)).current;
 
-  // ─── Spelling mode: buffers consecutive single-letter detections and
-  // ─── flushes them into one spoken word after SPELL_TIMEOUT_MS of no
-  // ─── new letters. Full-word signs are ignored while a buffer is open,
-  // ─── so a stray misdetection mid-spelling can't interrupt the word.
+  // ─── Spelling mode ───────────────────────────────────────────────────
   const spellBufferRef = useRef<string[]>([]);
   const spellTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [isSpelling, setIsSpelling] = useState(false);
   const [spellBuffer, setSpellBuffer] = useState<string>('');
+
+  const [spellLanguage, setSpellLanguage] = useState<SpellLanguage>('en');
+  const spellLanguageRef = useRef<SpellLanguage>(spellLanguage);
+  useEffect(() => {
+    spellLanguageRef.current = spellLanguage;
+  }, [spellLanguage]);
+
+  const toggleSpellLanguage = useCallback(() => {
+    setSpellLanguage(prev => (prev === 'en' ? 'fil' : 'en'));
+  }, []);
+
+  const [spellSuggestions, setSpellSuggestions] = useState<string[] | null>(null);
+  const [spellPendingWord, setSpellPendingWord] = useState<string | null>(null);
 
   const flushSpellBuffer = useCallback(() => {
     if (spellTimerRef.current) {
@@ -246,18 +253,54 @@ export function useSignTranslator() {
       return;
     }
 
-    const word = letters.join('');
+    // Clear any stale suggestions from a previous word now that a new
+    // word is actually flushing — this only happens here (not in
+    // pushLetter), so a stray letter detected right after a flush can't
+    // wipe suggestions before the user has a chance to see/tap them.
+    setSpellSuggestions(null);
+    setSpellPendingWord(null);
+
+    const spelled = letters.join('');
     spellBufferRef.current = [];
     setIsSpelling(false);
     setSpellBuffer('');
 
-    // Surface the spelled word through the same `detection` card/voice
-    // path used for whole-word signs, so the UI doesn't need two code
-    // paths for "how a result gets shown."
-    setDetection({ label: word, confidence: 1 });
+    // Only ever runs on the letter buffer (A-Z detections) — never
+    // touches whole-word or Filipino-medical-term detections, which take
+    // a completely separate path in runOnce() and never reach here.
+    const result = autocorrectSpelledWord(spelled, spellLanguageRef.current);
+
+    if (result.suggestions && result.suggestions.length > 0) {
+      // Ambiguous tie — don't speak anything yet, wait for the user to pick.
+      setSpellPendingWord(spelled);
+      setSpellSuggestions(result.suggestions);
+      return;
+    }
+
+    setDetection({ label: result.word, confidence: 1 });
+  }, []);
+
+  // User tapped a suggestion chip (or the "keep as spelled" option).
+  const resolveSpellSuggestion = useCallback((chosen: string) => {
+    setSpellSuggestions(null);
+    setSpellPendingWord(null);
+    setDetection({ label: chosen, confidence: 1 });
+  }, []);
+
+  // Discard the pending choice without picking anything.
+  const dismissSpellSuggestions = useCallback(() => {
+    setSpellSuggestions(null);
+    setSpellPendingWord(null);
   }, []);
 
   const pushLetter = useCallback((letter: string) => {
+    // Note: this intentionally does NOT clear spellSuggestions/
+    // spellPendingWord anymore. Clearing happened here previously, which
+    // meant a stray letter detected right after a flush (the hand
+    // doesn't vanish from frame instantly) could wipe suggestions within
+    // one detection tick (~400ms) — faster than a user could see or tap
+    // them. Suggestions now only clear when a new word actually flushes
+    // (in flushSpellBuffer), or via explicit resolve/dismiss/stop.
     spellBufferRef.current.push(letter);
     setIsSpelling(true);
     setSpellBuffer(spellBufferRef.current.join(''));
@@ -410,22 +453,15 @@ export function useSignTranslator() {
           const label = SIGN_LABELS[result.classIdx] ?? `Class_${result.classIdx}`;
 
           if (isLetterLabel(label)) {
-            // Spellable letter: buffer it and (re)start the 3s window
-            // instead of surfacing it as a standalone detection.
             pushLetter(label);
           } else if (spellBufferRef.current.length > 0) {
-            // A full word came in while letters are buffered — per
-            // design, ignore it so it can't interrupt an in-progress
-            // spelled word. The 3s timer keeps running unaffected.
+            // ignore full-word signs while letters are buffered
           } else {
             setDetection({ label, confidence: result.score });
           }
         }
       } else {
         historyRef.current = [];
-        // Only clear the live "detection" card when we're not mid-spell —
-        // clearing it here would blank the UI between individual letter
-        // captures even though the buffer is still accumulating.
         if (spellBufferRef.current.length === 0) {
           setDetection(null);
         }
@@ -464,12 +500,12 @@ export function useSignTranslator() {
       if (prev) {
         setDetection(null);
         Speech.stop();
-        // Stopping mid-spell: drop the in-progress buffer rather than
-        // flushing it, since the session is ending intentionally.
         spellBufferRef.current = [];
         if (spellTimerRef.current) clearTimeout(spellTimerRef.current);
         setIsSpelling(false);
         setSpellBuffer('');
+        setSpellSuggestions(null);
+        setSpellPendingWord(null);
       }
       return !prev;
     });
@@ -490,8 +526,13 @@ export function useSignTranslator() {
     toggleDetection,
     isVoiceEnabled,
     toggleVoice,
-    // Spelling mode UI state
     isSpelling,
     spellBuffer,
+    spellLanguage,
+    toggleSpellLanguage,
+    spellSuggestions,
+    spellPendingWord,
+    resolveSpellSuggestion,
+    dismissSpellSuggestions,
   };
 }

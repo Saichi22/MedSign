@@ -1,29 +1,3 @@
-/**
- * SignTranslatorScreen.tsx
- *
- * Sign language translation screen — driven by the shared
- * `useSignTranslator` hook so camera, model, inference, AND voice output
- * all come from a single source of truth.
- *
- * Perf notes vs the previous version:
- * - The Camera preview, the model-status banner, and the detection card
- *   are split into memoized subcomponents. `detection` updates many
- *   times per second during a live session; without isolation, every
- *   update re-rendered the whole tree including the <Camera> view.
- *   Now only the small piece that actually depends on `detection`
- *   re-renders.
- * - Inline style object literals moved to StyleSheet.create so they
- *   aren't reallocated on every render.
- * - `isMedicalSign` is memoized off of `detection?.label` instead of
- *   being recomputed on every render regardless of whether it changed.
- * - `<Camera>` now receives the `format` computed in `useSignTranslator`
- *   (constrained close to the model's 640x640 input) instead of
- *   capturing at the device's full native photo resolution. See the
- *   comment above `format` in useSignDetector.ts for why this matters —
- *   it's what stops the app from running out of memory after a few
- *   minutes of live translation.
- */
-
 import React, { useMemo } from 'react';
 import {
   ScrollView,
@@ -41,7 +15,6 @@ import { COLOR } from '../../../../styles/colors/theme';
 import { styles } from '../../../../styles/colors/TranslatorScreenStyle';
 import { useSignTranslator, isMedicalLabel } from '../../../../hooks/useSignDetector';
 
-// ---- local styles for the bits that were previously inline objects ----
 const localStyles = StyleSheet.create({
   headerRightRow: {
     flexDirection: 'row',
@@ -50,11 +23,20 @@ const localStyles = StyleSheet.create({
   flexFill: {
     flex: 1,
   },
+  suggestionRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    marginTop: 8,
+  },
+  suggestionChip: {
+    paddingHorizontal: 12,
+    marginRight: 8,
+    marginBottom: 8,
+  },
+  suggestionChipFallback: {
+    opacity: 0.7,
+  },
 });
-
-// ---------------------------------------------------------------------
-// Memoized subcomponents
-// ---------------------------------------------------------------------
 
 type CameraViewProps = {
   cameraRef: React.RefObject<Camera | null>;
@@ -62,7 +44,6 @@ type CameraViewProps = {
   format: CameraDeviceFormat | undefined;
 };
 
-/** Isolated so `detection` updates elsewhere never re-render the camera. */
 const CameraView = React.memo(function CameraView({ cameraRef, device, format }: CameraViewProps) {
   return (
     <View style={styles.viewfinderWrap}>
@@ -163,9 +144,42 @@ const DetectionCard = React.memo(function DetectionCard({
   );
 });
 
-// ---------------------------------------------------------------------
-// Main screen
-// ---------------------------------------------------------------------
+type SpellSuggestionsProps = {
+  suggestions: string[];
+  pendingWord: string;
+  onSelect: (word: string) => void;
+};
+
+const SpellSuggestions = React.memo(function SpellSuggestions({
+  suggestions,
+  pendingWord,
+  onSelect,
+}: SpellSuggestionsProps) {
+  return (
+    <View style={styles.outputBox}>
+      <Text style={styles.outputTextMuted}>Did you mean:</Text>
+      <View style={localStyles.suggestionRow}>
+        {suggestions.map(word => (
+<TouchableOpacity
+  key={word}
+  onPress={() => onSelect(word)}
+  style={{ backgroundColor: '#2a9d8f', paddingHorizontal: 12, paddingVertical: 6, borderRadius: 8, marginRight: 8, marginBottom: 8 }}
+  activeOpacity={0.8}
+>
+  <Text style={{ color: '#ffffff', fontWeight: '600' }}>{word}</Text>
+</TouchableOpacity>
+        ))}
+        <TouchableOpacity
+          onPress={() => onSelect(pendingWord)}
+          style={[styles.liveBadge, localStyles.suggestionChip, localStyles.suggestionChipFallback]}
+          activeOpacity={0.8}
+        >
+          <Text style={styles.liveText}>{pendingWord} (as spelled)</Text>
+        </TouchableOpacity>
+      </View>
+    </View>
+  );
+});
 
 export default function SignTranslatorScreen() {
   const {
@@ -185,9 +199,13 @@ export default function SignTranslatorScreen() {
     toggleVoice,
     isSpelling,
     spellBuffer,
+    spellLanguage,
+    toggleSpellLanguage,
+    spellSuggestions,
+    spellPendingWord,
+    resolveSpellSuggestion,
   } = useSignTranslator();
 
-  // Only recompute when the detected label actually changes.
   const isMedicalSign = useMemo(
     () => !!detection && isMedicalLabel(detection.label),
     [detection?.label],
@@ -239,6 +257,17 @@ export default function SignTranslatorScreen() {
             <Text style={styles.headerTitle}>Sign Language</Text>
           </View>
           <View style={localStyles.headerRightRow}>
+            {/* Spelling-language toggle (EN / FIL) */}
+            <TouchableOpacity
+              onPress={toggleSpellLanguage}
+              style={[styles.liveBadge, { marginRight: 8 }]}
+              activeOpacity={0.8}
+            >
+              <Text style={[styles.liveText, { color: COLOR.tealBright }]}>
+                {spellLanguage === 'en' ? 'EN' : 'FIL'}
+              </Text>
+            </TouchableOpacity>
+
             {/* Voice mute/unmute toggle */}
             <TouchableOpacity
               onPress={toggleVoice}
@@ -289,10 +318,23 @@ export default function SignTranslatorScreen() {
           {isSpelling && (
             <View style={styles.outputBox}>
               <Text style={styles.outputTextMuted}>
-                Spelling: {spellBuffer}<Text style={{ opacity: 0.5 }}>_</Text>
+                Spelling ({spellLanguage === 'en' ? 'English' : 'Filipino'}): {spellBuffer}
+                <Text style={{ opacity: 0.5 }}>_</Text>
               </Text>
             </View>
           )}
+
+          {spellSuggestions && spellPendingWord && (
+  <>
+    {console.log('[SignTranslator] rendering suggestions:', JSON.stringify(spellSuggestions), 'pending:', spellPendingWord)}
+    <SpellSuggestions
+      suggestions={spellSuggestions}
+      pendingWord={spellPendingWord}
+      onSelect={resolveSpellSuggestion}
+    />
+  </>
+)}
+
           <DetectionCard
             detection={detection}
             isDetecting={isDetecting}
