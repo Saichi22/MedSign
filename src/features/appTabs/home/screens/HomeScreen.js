@@ -239,6 +239,13 @@ export default function HomeScreen() {
           <Text style={styles.sectionLabel}>QUICK ACTIONS</Text>
           <View style={styles.quickList}>
             <QuickActionCard
+              icon="microphone"
+              label="Speech to Sign"
+              sublabel="Test voice input"
+              tint={{ bg: 'rgba(16,185,129,0.10)', border: 'rgba(16,185,129,0.20)', icon: '#059669' }}
+              onPress={() => navigation.navigate('SpeechToSign')}
+            />
+            <QuickActionCard
               icon="history"
               label="Recent Translations"
               sublabel="Review your last sessions"

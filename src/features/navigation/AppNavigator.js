@@ -14,6 +14,7 @@ import HomeScreen from '../appTabs/home/screens/HomeScreen';
 import SettingsScreen from '../appTabs/settings/screens/SettingsScreen';
 import TranslatorScreen from '../appTabs/home/screens/TranslatorScreen';
 import PhrasebookScreen from '../appTabs/home/screens/PhrasebookScreen';
+import SpeechToSignScreen from '../appTabs/home/screens/SpeechToSignScreen';
 
 const Stack = createStackNavigator();
 const Tab = createBottomTabNavigator();
@@ -89,6 +90,11 @@ function AppStack() {
         name="Phrasebook" 
         component={PhrasebookScreen} 
         options={{ headerShown: false, title: 'Phrasebook' }} 
+      />
+      <Stack.Screen
+        name="SpeechToSign"
+        component={SpeechToSignScreen}
+        options={{ headerShown: false, title: 'Speech to Sign' }}
       />
     </Stack.Navigator>
   );
