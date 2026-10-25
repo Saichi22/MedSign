@@ -13,14 +13,26 @@ const local = StyleSheet.create({
   transcript: { fontSize: 22, lineHeight: 30, color: COLOR.tealDeep, marginTop: 6 },
   transcriptPartial: { opacity: 0.55 },
   error: { color: COLOR.red, marginTop: 10 },
+  btnDisabled: { opacity: 0.5 },
 });
 
 export default function SpeechToSignScreen() {
   const navigation = useNavigation();
-  const { isListening, partialText, finalText, error, language, toggleLanguage, start, stop, reset } =
-    useSpeechToText();
+  const {
+    isListening,
+    partialText,
+    finalText,
+    error,
+    language,
+    toggleLanguage,
+    start,
+    stop,
+    reset,
+    modelReady,
+  } = useSpeechToText();
 
   const hasText = !!(partialText || finalText);
+  const startDisabled = !isListening && !modelReady;
 
   return (
     <View style={styles.root}>
@@ -80,7 +92,9 @@ export default function SpeechToSignScreen() {
               </Text>
             ) : (
               <Text style={styles.outputTextMuted}>
-                {isListening
+                {!modelReady
+                  ? 'Loading speech model…'
+                  : isListening
                   ? 'Listening… start speaking'
                   : `Tap Start Listening and speak in ${language === 'en-US' ? 'English' : 'Filipino'}`}
               </Text>
@@ -90,8 +104,13 @@ export default function SpeechToSignScreen() {
         </View>
 
         <TouchableOpacity
-          style={[styles.primaryBtn, isListening && styles.stopBtn]}
+          style={[
+            styles.primaryBtn,
+            isListening && styles.stopBtn,
+            startDisabled && local.btnDisabled,
+          ]}
           onPress={isListening ? stop : start}
+          disabled={startDisabled}
           activeOpacity={0.88}
         >
           <MaterialCommunityIcons
@@ -100,7 +119,7 @@ export default function SpeechToSignScreen() {
             color={isListening ? COLOR.red : COLOR.tealDeep}
           />
           <Text style={[styles.primaryBtnText, isListening && styles.stopBtnText]}>
-            {isListening ? 'Stop Listening' : 'Start Listening'}
+            {isListening ? 'Stop Listening' : modelReady ? 'Start Listening' : 'Loading…'}
           </Text>
         </TouchableOpacity>
 
