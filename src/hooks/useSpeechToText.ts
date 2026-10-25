@@ -1,3 +1,6 @@
+import { NativeModules } from 'react-native';
+console.log('Voice native module:', NativeModules.Voice);
+
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { PermissionsAndroid, Platform } from 'react-native';
 import Voice, {
