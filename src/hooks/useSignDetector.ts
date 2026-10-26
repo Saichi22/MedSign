@@ -47,16 +47,36 @@ const ROTATION_MAP: Record<string, 0 | 90 | 180 | 270> = {
   'portrait-upside-down': 180,
 };
 const EXIF_ROTATION_MAP: Record<number, 0 | 90 | 180 | 270> = { 1: 0, 3: 180, 6: 90, 8: 270 };
+export type CameraPosition = 'front' | 'back';
+
+// Per-camera settings. The front camera is mirrored (selfie-style, matching how the
+// model was most likely trained); the back camera is not. If the back camera gives
+// worse accuracy, flip MIRROR_BACK_CAMERA to true and compare.
 const MIRROR_FRONT_CAMERA = true;
-const ASSUMED_LANDSCAPE_DIRECTION: 90 | 270 = 90;
+const MIRROR_BACK_CAMERA = false;
+
+// Used only when orientation metadata is missing/contradicts the buffer size.
+// Android back/front sensors are typically mounted 180° apart, so these differ.
+// If the back camera comes out sideways/upside-down, swap 270 <-> 90 here.
+const ASSUMED_LANDSCAPE_DIRECTION: Record<CameraPosition, 90 | 270> = {
+  front: 90,
+  back: 270,
+};
+
+// Skip inference briefly after switching cameras so takePhoto doesn't hit a half-swapped camera.
+const CAMERA_SWITCH_COOLDOWN_MS = 800;
 
 function getRotationDeg(
   orientation: string | undefined,
   exifOrientation: number | undefined,
   srcW: number,
   srcH: number,
+  cameraPosition: CameraPosition,
 ): 0 | 90 | 180 | 270 {
-  if (FRONT_CAM_ROTATION_OVERRIDE !== null) return FRONT_CAM_ROTATION_OVERRIDE;
+  if (cameraPosition === 'front' && FRONT_CAM_ROTATION_OVERRIDE !== null) {
+    return FRONT_CAM_ROTATION_OVERRIDE;
+  }
+  const assumedLandscape = ASSUMED_LANDSCAPE_DIRECTION[cameraPosition];
 
   let claimed: 0 | 90 | 180 | 270 | null = null;
 
@@ -71,9 +91,9 @@ function getRotationDeg(
   const dimensionsDisagreeWithClaim = bufferIsLandscape === claimedNoSwap;
 
   if (dimensionsDisagreeWithClaim) {
-    return bufferIsLandscape ? ASSUMED_LANDSCAPE_DIRECTION : (claimed ?? 0);
+    return bufferIsLandscape ? assumedLandscape : (claimed ?? 0);
   }
-  return claimed ?? (bufferIsLandscape ? ASSUMED_LANDSCAPE_DIRECTION : 0);
+  return claimed ?? (bufferIsLandscape ? assumedLandscape : 0);
 }
 
 let resizeOutputBuffer: Float32Array | null = null;
@@ -205,7 +225,21 @@ export function isMedicalLabel(label: string): boolean {
 // ─── Hook Implementation ─────────────────────────────────────────────────────
 export function useSignTranslator() {
   const { hasPermission, requestPermission } = useCameraPermission();
-  const device = useCameraDevice('front');
+  const frontDevice = useCameraDevice('front');
+  const backDevice = useCameraDevice('back');
+
+  const [cameraPosition, setCameraPosition] = useState<CameraPosition>('front');
+  const cameraPositionRef = useRef<CameraPosition>(cameraPosition);
+  useEffect(() => {
+    cameraPositionRef.current = cameraPosition;
+  }, [cameraPosition]);
+
+  const hasBackCamera = !!backDevice;
+  // Fall back to whichever camera exists if the selected one is missing.
+  const device =
+    cameraPosition === 'back' ? (backDevice ?? frontDevice) : (frontDevice ?? backDevice);
+
+  const cameraSwitchUntilRef = useRef(0);
 
   const format = useCameraFormat(device, [
     { photoResolution: { width: INPUT_SIZE, height: INPUT_SIZE } },
@@ -316,6 +350,15 @@ export function useSignTranslator() {
   }, []);
   // ─── end spelling mode ──────────────────────────────────────────────
 
+  // ─── Camera switching ───────────────────────────────────────────────
+  const toggleCamera = useCallback(() => {
+    if (!backDevice || !frontDevice) return; // only one camera available
+    cameraSwitchUntilRef.current = Date.now() + CAMERA_SWITCH_COOLDOWN_MS;
+    historyRef.current = [];
+    setDetection(null);
+    setCameraPosition(prev => (prev === 'front' ? 'back' : 'front'));
+  }, [backDevice, frontDevice]);
+
   const [model, setModel] = useState<TensorflowModel | null>(null);
   const [modelState, setModelState] = useState<'loading' | 'loaded' | 'error'>('loading');
   const [modelError, setModelError] = useState<unknown>(null);
@@ -414,6 +457,7 @@ export function useSignTranslator() {
 
   const runOnce = useCallback(async () => {
     if (busyRef.current || !cameraRef.current || !model) return;
+    if (Date.now() < cameraSwitchUntilRef.current) return;
     busyRef.current = true;
 
     let photoPath: string | null = null;
@@ -434,8 +478,10 @@ export function useSignTranslator() {
       const srcPixels = new Uint8Array(rawPixelData.buffer);
       const inferredChannels = Math.round(srcPixels.length / (srcW * srcH)) as 3 | 4;
 
-      const rotationDeg = getRotationDeg(rawOrientation, exifOrientation, srcW, srcH);
-      const float32Input = resizeToFloat32(srcPixels, srcW, srcH, inferredChannels, rotationDeg, MIRROR_FRONT_CAMERA);
+      const position = cameraPositionRef.current;
+      const rotationDeg = getRotationDeg(rawOrientation, exifOrientation, srcW, srcH, position);
+      const mirror = position === 'front' ? MIRROR_FRONT_CAMERA : MIRROR_BACK_CAMERA;
+      const float32Input = resizeToFloat32(srcPixels, srcW, srcH, inferredChannels, rotationDeg, mirror);
 
       if (!model) return;
       const outputs = model.runSync([float32Input.buffer as ArrayBuffer]);
@@ -516,6 +562,9 @@ export function useSignTranslator() {
     requestPermission,
     device,
     format,
+    cameraPosition,
+    hasBackCamera,
+    toggleCamera,
     isDetecting,
     detection,
     isModelReady,

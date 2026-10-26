@@ -48,6 +48,7 @@ const CameraView = React.memo(function CameraView({ cameraRef, device, format }:
   return (
     <View style={styles.viewfinderWrap}>
       <Camera
+        key={device.id}
         ref={cameraRef}
         style={StyleSheet.absoluteFill}
         device={device}
@@ -187,6 +188,9 @@ export default function SignTranslatorScreen() {
     requestPermission,
     device,
     format,
+    cameraPosition,
+    hasBackCamera,
+    toggleCamera,
     isDetecting,
     detection,
     isModelReady,
@@ -235,7 +239,7 @@ export default function SignTranslatorScreen() {
           <MaterialCommunityIcons name="camera-off" size={28} color={COLOR.tealBright} />
         </View>
         <Text style={styles.emptyTitle}>No Camera Found</Text>
-        <Text style={styles.emptyBody}>A front-facing camera is required for sign detection.</Text>
+        <Text style={styles.emptyBody}>A camera is required for sign detection.</Text>
       </View>
     );
   }
@@ -267,6 +271,17 @@ export default function SignTranslatorScreen() {
                 {spellLanguage === 'en' ? 'EN' : 'FIL'}
               </Text>
             </TouchableOpacity>
+
+            {/* Front / back camera toggle */}
+            {hasBackCamera && (
+              <TouchableOpacity
+                onPress={toggleCamera}
+                style={[styles.liveBadge, { marginRight: 8 }]}
+                activeOpacity={0.8}
+              >
+                <MaterialCommunityIcons name="camera-flip" size={16} color={COLOR.tealBright} />
+              </TouchableOpacity>
+            )}
 
             {/* Voice mute/unmute toggle */}
             <TouchableOpacity
@@ -306,7 +321,11 @@ export default function SignTranslatorScreen() {
               </View>
               <View>
                 <Text style={styles.cardTitle}>Camera Input</Text>
-                <Text style={styles.cardSub}>Keep hands clearly within the boundaries</Text>
+                <Text style={styles.cardSub}>
+                  {cameraPosition === 'front'
+                    ? 'Keep hands clearly within the boundaries'
+                    : 'Back camera: point at the signer, hands within the boundaries'}
+                </Text>
               </View>
             </View>
           </View>
@@ -325,14 +344,11 @@ export default function SignTranslatorScreen() {
           )}
 
           {spellSuggestions && spellPendingWord && (
-  <>
-    {console.log('[SignTranslator] rendering suggestions:', JSON.stringify(spellSuggestions), 'pending:', spellPendingWord)}
-    <SpellSuggestions
-      suggestions={spellSuggestions}
-      pendingWord={spellPendingWord}
-      onSelect={resolveSpellSuggestion}
-    />
-  </>
+  <SpellSuggestions
+    suggestions={spellSuggestions}
+    pendingWord={spellPendingWord}
+    onSelect={resolveSpellSuggestion}
+  />
 )}
 
           <DetectionCard
