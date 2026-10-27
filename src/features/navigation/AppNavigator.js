@@ -15,6 +15,8 @@ import SettingsScreen from '../appTabs/settings/screens/SettingsScreen';
 import TranslatorScreen from '../appTabs/home/screens/TranslatorScreen';
 import PhrasebookScreen from '../appTabs/home/screens/PhrasebookScreen';
 import SpeechToSignScreen from '../appTabs/home/screens/SpeechToSignScreen';
+import LearnScreen from '../appTabs/home/screens/LearnScreen';
+import LessonScreen from '../appTabs/home/screens/LessonScreen';
 
 const Stack = createStackNavigator();
 const Tab = createBottomTabNavigator();
@@ -95,6 +97,16 @@ function AppStack() {
         name="SpeechToSign"
         component={SpeechToSignScreen}
         options={{ headerShown: false, title: 'Speech to Sign' }}
+      />
+      <Stack.Screen
+        name="Learn"
+        component={LearnScreen}
+        options={{ headerShown: false, title: 'Learn FSL' }}
+      />
+      <Stack.Screen
+        name="Lesson"
+        component={LessonScreen}
+        options={{ headerShown: false, title: 'Lesson' }}
       />
     </Stack.Navigator>
   );
