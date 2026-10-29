@@ -6,6 +6,7 @@ import React, { useState, useMemo, useRef, useEffect, useCallback } from 'react'
 import { View, Text, TouchableOpacity, ScrollView, StatusBar, Animated, Easing, Image, StyleSheet } from 'react-native';
 import { Camera } from 'react-native-vision-camera';
 import { useNavigation, useRoute } from '@react-navigation/native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import MaterialCommunityIcons from 'react-native-vector-icons/MaterialCommunityIcons';
 
 import { COLOR, FONT, RADIUS } from '../../../../styles/colors/theme';
@@ -17,6 +18,12 @@ import { useSignPractice } from '../../../../hooks/useSignDetector';
 const SIGNS_PER_LESSON = 10;
 const OPTIONS_PER_QUESTION = 4;
 const LETTERS = ['A', 'B', 'C', 'D'];
+
+// Keeps bottom buttons above the Android navigation bar / gesture area.
+const useBottomPad = () => {
+  const insets = useSafeAreaInsets();
+  return Math.max(insets.bottom, 16) + 12;
+};
 
 const shuffle = (arr) => {
   const a = [...arr];
@@ -260,6 +267,7 @@ function Option({ option, letter, selectedId, answerId, onPress }) {
 
 // ─── Result ──────────────────────────────────────────────────────────────────
 function ResultView({ score, total, missed, onRetry, onReview, onDone }) {
+  const bottomPad = useBottomPad();
   const ratio = total ? score / total : 0;
   const perfect = score === total;
   const ringColor = ratio >= 0.7 ? '#4ADE80' : '#FBBF24';
@@ -330,7 +338,7 @@ function ResultView({ score, total, missed, onRetry, onReview, onDone }) {
         </View>
       </ScrollView>
 
-      <View style={styles.footer}>
+      <View style={[styles.footer, { paddingBottom: bottomPad }]}>
         <TouchableOpacity style={styles.primaryBtn} onPress={onRetry} activeOpacity={0.88}>
           <MaterialCommunityIcons name="refresh" size={20} color={COLOR.tealDeep} />
           <Text style={styles.primaryBtnText}>Retry quiz</Text>
@@ -349,6 +357,7 @@ function ResultView({ score, total, missed, onRetry, onReview, onDone }) {
 // ─── Screen ──────────────────────────────────────────────────────────────────
 export default function LessonScreen() {
   const navigation = useNavigation();
+  const bottomPad = useBottomPad();
   const { groupKey } = useRoute().params;
   const group = LESSON_GROUPS.find((g) => g.key === groupKey);
 
@@ -664,7 +673,7 @@ export default function LessonScreen() {
 
       {/* Footer */}
       {isPractice ? (
-        <View style={styles.footer}>
+        <View style={[styles.footer, { paddingBottom: bottomPad }]}>
           {practice.matched ? (
             <TouchableOpacity style={[styles.primaryBtn, styles.btnCorrect]} onPress={handlePracticeNext} activeOpacity={0.88}>
               <MaterialCommunityIcons name="check" size={20} color={COLOR.white} />
@@ -681,7 +690,7 @@ export default function LessonScreen() {
           )}
         </View>
       ) : isLearn ? (
-        <View style={[styles.footer, styles.footerRow]}>
+        <View style={[styles.footer, styles.footerRow, { paddingBottom: bottomPad }]}>
           {learnIndex > 0 && (
             <TouchableOpacity style={styles.backStepBtn} onPress={handleLearnBack} activeOpacity={0.85}>
               <MaterialCommunityIcons name="arrow-left" size={20} color={COLOR.inkMuted} />
@@ -700,7 +709,7 @@ export default function LessonScreen() {
           style={[
             styles.sheet,
             answered && (isCorrect ? styles.sheetCorrect : styles.sheetWrong),
-            { transform: [{ translateY: sheetSlide }] },
+            { paddingBottom: bottomPad, transform: [{ translateY: sheetSlide }] },
           ]}
         >
           {answered ? (
