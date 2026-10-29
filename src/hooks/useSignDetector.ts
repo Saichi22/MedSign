@@ -585,3 +585,153 @@ export function useSignTranslator() {
     dismissSpellSuggestions,
   };
 }
+
+// ─── Lesson practice recognizer ──────────────────────────────────────────────
+// Lightweight camera + model loop for LessonScreen. No spelling, no speech.
+// Give it the label the learner should be signing; `matched` turns true once the
+// model sees that label PRACTICE_MATCH_FRAMES times in a row.
+const PRACTICE_MATCH_FRAMES = 2;
+
+export function useSignPractice(targetLabel: string | null, active: boolean) {
+  const { hasPermission, requestPermission } = useCameraPermission();
+  const frontDevice = useCameraDevice('front');
+  const backDevice = useCameraDevice('back');
+  const device = frontDevice ?? backDevice;
+  const position: CameraPosition = frontDevice ? 'front' : 'back';
+
+  const format = useCameraFormat(device, [
+    { photoResolution: { width: INPUT_SIZE, height: INPUT_SIZE } },
+  ]);
+
+  const cameraRef = useRef<Camera>(null);
+  const busyRef = useRef(false);
+  const streakRef = useRef(0);
+  const targetRef = useRef<string | null>(targetLabel);
+  const loopRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const [seen, setSeen] = useState<SignDetection | null>(null);
+  const [matched, setMatched] = useState(false);
+
+  // New target sign: start fresh
+  useEffect(() => {
+    targetRef.current = targetLabel;
+    streakRef.current = 0;
+    setMatched(false);
+    setSeen(null);
+  }, [targetLabel]);
+
+  const reset = useCallback(() => {
+    streakRef.current = 0;
+    setMatched(false);
+    setSeen(null);
+  }, []);
+
+  // Model (same cached file the translator uses)
+  const [model, setModel] = useState<TensorflowModel | null>(null);
+  const [modelState, setModelState] = useState<'loading' | 'loaded' | 'error'>('loading');
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        setModelState('loading');
+        const localPath = `${RNFS.CachesDirectoryPath}/besta_float16.tflite`;
+        if (!(await RNFS.exists(localPath))) {
+          await RNFS.copyFileAssets('besta_float16.tflite', localPath);
+        }
+        const loaded = await loadTensorflowModel({ url: `file://${localPath}` }, []);
+        if (!cancelled) {
+          setModel(loaded);
+          setModelState('loaded');
+        }
+      } catch (e) {
+        if (!cancelled) {
+          setModelState('error');
+          console.warn('[SignPractice] model load error:', e);
+        }
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
+  const isModelReady = modelState === 'loaded';
+
+  const runOnce = useCallback(async () => {
+    if (busyRef.current || !cameraRef.current || !model) return;
+    busyRef.current = true;
+    let photoPath: string | null = null;
+
+    try {
+      const photo = await cameraRef.current.takePhoto({ flash: 'off' });
+      photoPath = photo.path;
+      const filePath = photo.path.startsWith('file://') ? photo.path : `file://${photo.path}`;
+
+      const rawOrientation = (photo as any).orientation;
+      const exifOrientation = (photo as any).metadata?.Orientation ?? (photo as any).metadata?.orientation;
+
+      const image = await Images.loadFromFileAsync(filePath);
+      const rawPixelData = await image.toRawPixelData();
+      const srcW = image.width;
+      const srcH = image.height;
+
+      const srcPixels = new Uint8Array(rawPixelData.buffer);
+      const channels = Math.round(srcPixels.length / (srcW * srcH)) as 3 | 4;
+
+      const rotationDeg = getRotationDeg(rawOrientation, exifOrientation, srcW, srcH, position);
+      const mirror = position === 'front' ? MIRROR_FRONT_CAMERA : MIRROR_BACK_CAMERA;
+      const input = resizeToFloat32(srcPixels, srcW, srcH, channels, rotationDeg, mirror);
+
+      const outputs = model.runSync([input.buffer as ArrayBuffer]);
+      const result = findBestDetection(new Float32Array(outputs[0]));
+
+      if (!result) {
+        streakRef.current = 0;
+        setSeen(null);
+        return;
+      }
+
+      const label = SIGN_LABELS[result.classIdx] ?? `Class_${result.classIdx}`;
+      setSeen({ label, confidence: result.score });
+
+      if (label === targetRef.current) {
+        streakRef.current += 1;
+        if (streakRef.current >= PRACTICE_MATCH_FRAMES) setMatched(true);
+      } else {
+        streakRef.current = 0;
+      }
+    } catch (e) {
+      console.warn('[SignPractice] inference error:', e);
+    } finally {
+      if (photoPath) {
+        await RNFS.unlink(photoPath).catch(() => {});
+      }
+      busyRef.current = false;
+    }
+  }, [model, position]);
+
+  // Run only while practicing, camera allowed, and not already matched
+  useEffect(() => {
+    if (!active || !isModelReady || !hasPermission || matched || !targetLabel) return;
+    const tick = () => {
+      runOnce();
+      loopRef.current = setTimeout(tick, THROTTLE_MS);
+    };
+    loopRef.current = setTimeout(tick, 0);
+    return () => {
+      if (loopRef.current) clearTimeout(loopRef.current);
+    };
+  }, [active, isModelReady, hasPermission, matched, targetLabel, runOnce]);
+
+  return {
+    hasPermission,
+    requestPermission,
+    device,
+    format,
+    cameraRef,
+    isModelReady,
+    modelState,
+    seen,
+    matched,
+    reset,
+  };
+}

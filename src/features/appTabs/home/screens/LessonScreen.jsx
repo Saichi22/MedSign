@@ -1,17 +1,20 @@
 // LessonScreen.jsx
-// Two steps: 1) LEARN each sign (sign + word + meaning), 2) QUIZ on those same signs.
+// Three steps: 1) LEARN each sign, 2) PRACTICE it on camera (the detector checks your sign),
+// 3) QUIZ on those same signs. Practice is skipped for lessons with no detectable signs.
 // UI only: no points, streaks or saved progress.
 import React, { useState, useMemo, useRef, useEffect, useCallback } from 'react';
-import { View, Text, TouchableOpacity, ScrollView, StatusBar, Animated, Easing, Image } from 'react-native';
+import { View, Text, TouchableOpacity, ScrollView, StatusBar, Animated, Easing, Image, StyleSheet } from 'react-native';
+import { Camera } from 'react-native-vision-camera';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import MaterialCommunityIcons from 'react-native-vector-icons/MaterialCommunityIcons';
 
-import { COLOR } from '../../../../styles/colors/theme';
+import { COLOR, FONT, RADIUS } from '../../../../styles/colors/theme';
 import { learnStyles as styles } from '../../../../styles/colors/LearnStyle';
-import { PHRASES, LESSON_GROUPS, phrasesForGroup } from '../../../../data/phrasebookData';
+import { PHRASES, LESSON_GROUPS, phrasesForGroup, detectorLabelFor } from '../../../../data/phrasebookData';
 import { SIGN_MEDIA } from '../../../../data/signMedia';
+import { useSignPractice } from '../../../../hooks/useSignDetector';
 
-const SIGNS_PER_LESSON = 8;
+const SIGNS_PER_LESSON = 10;
 const OPTIONS_PER_QUESTION = 4;
 const LETTERS = ['A', 'B', 'C', 'D'];
 
@@ -80,6 +83,110 @@ function SignStage({ phraseId, fsl, label, showHint }) {
         <View style={[styles.corner, styles.cornerTR]} pointerEvents="none" />
         <View style={[styles.corner, styles.cornerBL]} pointerEvents="none" />
         <View style={[styles.corner, styles.cornerBR]} pointerEvents="none" />
+      </View>
+    </View>
+  );
+}
+
+// ─── Practice-only styles ────────────────────────────────────────────────────
+const local = StyleSheet.create({
+  targetCard: {
+    backgroundColor: COLOR.bgCard,
+    borderRadius: RADIUS.lg,
+    borderWidth: 1,
+    borderColor: COLOR.borderCard,
+    paddingVertical: 16,
+    paddingHorizontal: 18,
+    alignItems: 'center',
+    marginBottom: 16,
+  },
+  targetEyebrow: { fontFamily: FONT.sans, fontSize: 10, fontWeight: '700', color: COLOR.inkFaint, letterSpacing: 1.4 },
+  targetFsl: { fontFamily: FONT.serif, fontSize: 30, color: COLOR.inkPrimary, letterSpacing: -0.5, textAlign: 'center', marginTop: 4 },
+  targetEnglish: { fontFamily: FONT.sans, fontSize: 14, fontWeight: '600', color: COLOR.tealMid, marginTop: 2, textAlign: 'center' },
+  cameraCard: {
+    height: 320,
+    borderRadius: RADIUS.xl,
+    backgroundColor: '#000000',
+    overflow: 'hidden',
+    marginTop: 4,
+  },
+  statusPill: {
+    position: 'absolute',
+    bottom: 14,
+    left: 14,
+    right: 14,
+    borderRadius: RADIUS.pill,
+    paddingVertical: 9,
+    paddingHorizontal: 14,
+    backgroundColor: 'rgba(0,0,0,0.58)',
+    alignItems: 'center',
+  },
+  statusPillOk: { backgroundColor: 'rgba(22,163,74,0.94)' },
+  statusText: { fontFamily: FONT.sans, fontSize: 13, fontWeight: '700', color: COLOR.white },
+  permCard: {
+    backgroundColor: COLOR.bgCard,
+    borderRadius: RADIUS.lg,
+    borderWidth: 1,
+    borderColor: COLOR.borderCard,
+    padding: 22,
+    alignItems: 'center',
+    gap: 10,
+    marginTop: 4,
+  },
+  permText: { fontFamily: FONT.sans, fontSize: 13.5, color: COLOR.inkMuted, textAlign: 'center', lineHeight: 19 },
+});
+
+const niceLabel = (label) => (label || '').replace(/_/g, ' ');
+
+// ─── Camera box that watches the learner's sign ──────────────────────────────
+function PracticeCamera({ practice, active }) {
+  const { hasPermission, requestPermission, device, format, cameraRef, isModelReady, modelState, seen, matched } = practice;
+
+  if (!hasPermission) {
+    return (
+      <View style={local.permCard}>
+        <MaterialCommunityIcons name="camera-off" size={30} color={COLOR.tealBright} />
+        <Text style={local.permText}>Camera access is needed so the app can check your sign.</Text>
+        <TouchableOpacity style={[styles.primaryBtn, { alignSelf: 'stretch' }]} onPress={requestPermission} activeOpacity={0.88}>
+          <Text style={styles.primaryBtnText}>Allow camera</Text>
+        </TouchableOpacity>
+      </View>
+    );
+  }
+
+  if (!device) {
+    return (
+      <View style={local.permCard}>
+        <MaterialCommunityIcons name="camera-off" size={30} color={COLOR.tealBright} />
+        <Text style={local.permText}>No camera found on this device. You can skip this step.</Text>
+      </View>
+    );
+  }
+
+  let status = 'Show the sign inside the frame';
+  if (modelState === 'error') status = 'Sign model failed to load';
+  else if (!isModelReady) status = 'Getting the sign checker ready…';
+  else if (matched) status = 'Correct! That is the sign';
+  else if (seen) status = `I see: ${niceLabel(seen.label)} (${Math.round(seen.confidence * 100)}%). Keep trying`;
+
+  return (
+    <View style={local.cameraCard}>
+      <Camera
+        key={device.id}
+        ref={cameraRef}
+        style={StyleSheet.absoluteFill}
+        device={device}
+        format={format}
+        isActive={active}
+        photo={true}
+        pixelFormat="yuv"
+      />
+      <View style={[styles.corner, styles.cornerTL]} pointerEvents="none" />
+      <View style={[styles.corner, styles.cornerTR]} pointerEvents="none" />
+      <View style={[styles.corner, styles.cornerBL]} pointerEvents="none" />
+      <View style={[styles.corner, styles.cornerBR]} pointerEvents="none" />
+      <View style={[local.statusPill, matched && local.statusPillOk]} pointerEvents="none">
+        <Text style={local.statusText} numberOfLines={2}>{status}</Text>
       </View>
     </View>
   );
@@ -250,11 +357,28 @@ export default function LessonScreen() {
     [groupKey],
   );
 
-  const [phase, setPhase] = useState('learn'); // 'learn' | 'quiz' | 'result'
+  const [phase, setPhase] = useState('learn'); // 'learn' | 'practice' | 'quiz' | 'result'
   const [round, setRound] = useState(0);
   const questions = useMemo(() => buildQuestions(lessonPhrases, groupKey), [lessonPhrases, groupKey, round]);
 
   const [learnIndex, setLearnIndex] = useState(0);
+
+  // Camera practice: only signs the detector model can recognize
+  const practicePhrases = useMemo(
+    () => lessonPhrases.filter((p) => detectorLabelFor(p)),
+    [lessonPhrases],
+  );
+  const [practiceIndex, setPracticeIndex] = useState(0);
+  const [practiceResults, setPracticeResults] = useState([]); // true | 'skip' per sign
+  const practiceCard = practicePhrases[practiceIndex];
+  const isPractice = phase === 'practice';
+  const practice = useSignPractice(isPractice && practiceCard ? detectorLabelFor(practiceCard) : null, isPractice);
+  const { hasPermission, requestPermission } = practice;
+
+  useEffect(() => {
+    if (isPractice && !hasPermission) requestPermission();
+  }, [isPractice, hasPermission, requestPermission]);
+
   const [index, setIndex] = useState(0);
   const [selectedId, setSelectedId] = useState(null);
   const [results, setResults] = useState([]); // true/false per answered question
@@ -280,7 +404,7 @@ export default function LessonScreen() {
       Animated.timing(fade, { toValue: 1, duration: 240, useNativeDriver: true }),
       Animated.timing(slide, { toValue: 0, duration: 240, easing: Easing.out(Easing.cubic), useNativeDriver: true }),
     ]).start();
-  }, [phase, learnIndex, index, round]);
+  }, [phase, learnIndex, practiceIndex, index, round]);
 
   // Feedback sheet rises when an answer is picked
   const sheetSlide = useRef(new Animated.Value(0)).current;
@@ -330,10 +454,30 @@ export default function LessonScreen() {
     setPhase('learn');
   };
 
+  const startPractice = () => {
+    dirRef.current = 1;
+    setPracticeIndex(0);
+    setPracticeResults([]);
+    setPhase('practice');
+  };
+
   const handleLearnNext = () => {
     dirRef.current = 1;
-    if (learnIndex + 1 >= lessonPhrases.length) return startQuiz();
+    if (learnIndex + 1 >= lessonPhrases.length) {
+      return practicePhrases.length > 0 ? startPractice() : startQuiz();
+    }
     setLearnIndex((i) => i + 1);
+  };
+
+  const handlePracticeNext = () => {
+    dirRef.current = 1;
+    setPracticeResults((r) => {
+      const next = [...r];
+      next[practiceIndex] = practice.matched ? true : 'skip';
+      return next;
+    });
+    if (practiceIndex + 1 >= practicePhrases.length) return startQuiz();
+    setPracticeIndex((i) => i + 1);
   };
 
   const handleLearnBack = () => {
@@ -378,11 +522,19 @@ export default function LessonScreen() {
   }
 
   const isLearn = phase === 'learn';
-  const segCount = isLearn ? lessonPhrases.length : total;
-  const counter = isLearn ? `${learnIndex + 1}/${lessonPhrases.length}` : `${index + 1}/${total}`;
+  const segCount = isLearn ? lessonPhrases.length : isPractice ? practicePhrases.length : total;
+  const counter = isLearn
+    ? `${learnIndex + 1}/${lessonPhrases.length}`
+    : isPractice
+    ? `${practiceIndex + 1}/${practicePhrases.length}`
+    : `${index + 1}/${total}`;
 
   const segStyle = (i) => {
     if (isLearn) return i <= learnIndex ? styles.segLearn : null;
+    if (isPractice) {
+      if (practiceResults[i] === true) return styles.segCorrect;
+      return i === practiceIndex ? styles.segCurrent : practiceResults[i] === 'skip' ? styles.segLearn : null;
+    }
     if (results[i] === true) return styles.segCorrect;
     if (results[i] === false) return styles.segWrong;
     return i === index ? styles.segCurrent : null;
@@ -403,7 +555,7 @@ export default function LessonScreen() {
             <MaterialCommunityIcons name={group.icon} size={22} color={group.tint.icon} />
           </View>
           <View style={{ flex: 1 }}>
-            <Text style={styles.headerEyebrow}>{isLearn ? 'LEARN' : 'QUIZ'}</Text>
+            <Text style={styles.headerEyebrow}>{isLearn ? 'LEARN' : isPractice ? 'PRACTICE' : 'QUIZ'}</Text>
             <Text style={styles.lessonHeaderTitle} numberOfLines={1}>{group.title}</Text>
           </View>
           <View style={styles.counterPill}>
@@ -473,6 +625,16 @@ export default function LessonScreen() {
                 ))}
               </ScrollView>
             </>
+          ) : isPractice ? (
+            <>
+              <Text style={styles.heading}>Now you sign it</Text>
+              <View style={local.targetCard}>
+                <Text style={local.targetEyebrow}>SHOW THIS SIGN</Text>
+                <Text style={local.targetFsl}>{practiceCard.fsl}</Text>
+                <Text style={local.targetEnglish}>{practiceCard.english}</Text>
+              </View>
+              <PracticeCamera practice={practice} active={isPractice} />
+            </>
           ) : (
             <>
               <Text style={styles.heading}>Which word is this sign?</Text>
@@ -501,7 +663,24 @@ export default function LessonScreen() {
       </ScrollView>
 
       {/* Footer */}
-      {isLearn ? (
+      {isPractice ? (
+        <View style={styles.footer}>
+          {practice.matched ? (
+            <TouchableOpacity style={[styles.primaryBtn, styles.btnCorrect]} onPress={handlePracticeNext} activeOpacity={0.88}>
+              <MaterialCommunityIcons name="check" size={20} color={COLOR.white} />
+              <Text style={[styles.primaryBtnText, styles.btnTextLight]}>
+                {practiceIndex + 1 >= practicePhrases.length ? 'Start quiz' : 'Next sign'}
+              </Text>
+            </TouchableOpacity>
+          ) : (
+            <TouchableOpacity style={[styles.secondaryBtn, { marginTop: 0 }]} onPress={handlePracticeNext} activeOpacity={0.85}>
+              <Text style={styles.secondaryBtnText}>
+                {practiceIndex + 1 >= practicePhrases.length ? 'Skip to quiz' : 'Skip this sign'}
+              </Text>
+            </TouchableOpacity>
+          )}
+        </View>
+      ) : isLearn ? (
         <View style={[styles.footer, styles.footerRow]}>
           {learnIndex > 0 && (
             <TouchableOpacity style={styles.backStepBtn} onPress={handleLearnBack} activeOpacity={0.85}>
@@ -510,7 +689,9 @@ export default function LessonScreen() {
           )}
           <TouchableOpacity style={[styles.primaryBtn, { flex: 1 }]} onPress={handleLearnNext} activeOpacity={0.88}>
             <Text style={styles.primaryBtnText}>
-              {learnIndex + 1 >= lessonPhrases.length ? 'Start quiz' : 'Next sign'}
+              {learnIndex + 1 >= lessonPhrases.length
+                ? practicePhrases.length > 0 ? 'Practice on camera' : 'Start quiz'
+                : 'Next sign'}
             </Text>
           </TouchableOpacity>
         </View>

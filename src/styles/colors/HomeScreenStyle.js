@@ -516,4 +516,47 @@ export const styles = StyleSheet.create({
     color: COLOR.tealBright,
     letterSpacing: 0.2,
   },
+
+  // ── Emergency button (top of Home) ──────────────────────────────────────────
+  emergencyBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    backgroundColor: '#DC2626',
+    borderRadius: RADIUS.lg,
+    paddingHorizontal: 16,
+    height: 66,
+    marginBottom: 16,
+    shadowColor: '#DC2626',
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.28,
+    shadowRadius: 14,
+    elevation: 6,
+  },
+  emergencyIconWrap: {
+    width: 40,
+    height: 40,
+    borderRadius: RADIUS.sm,
+    backgroundColor: 'rgba(255,255,255,0.20)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  emergencyTitle: {
+    fontFamily: FONT.sans,
+    fontSize: 15,
+    fontWeight: '800',
+    color: COLOR.white,
+    letterSpacing: 0.4,
+  },
+  emergencySub: {
+    fontFamily: FONT.sans,
+    fontSize: 11.5,
+    color: 'rgba(255,255,255,0.80)',
+    marginTop: 1,
+  },
+
+  // ── Spacing between stacked hero cards ──────────────────────────────────────
+  heroGap: {
+    marginBottom: 16,
+  },
 });

@@ -13,10 +13,12 @@ import ForgotPasswordScreen from '../auth/screens/ForgotPasswordScreen';
 import HomeScreen from '../appTabs/home/screens/HomeScreen';
 import SettingsScreen from '../appTabs/settings/screens/SettingsScreen';
 import TranslatorScreen from '../appTabs/home/screens/TranslatorScreen';
-import PhrasebookScreen from '../appTabs/home/screens/PhrasebookScreen';
 import SpeechToSignScreen from '../appTabs/home/screens/SpeechToSignScreen';
 import LearnScreen from '../appTabs/home/screens/LearnScreen';
 import LessonScreen from '../appTabs/home/screens/LessonScreen';
+import EmergencyScreen from '../appTabs/home/screens/EmergencyScreen';
+import DictionaryScreen from '../appTabs/home/screens/DictionaryScreen';
+import SignDetailScreen from '../appTabs/home/screens/SignDetailScreen';
 
 const Stack = createStackNavigator();
 const Tab = createBottomTabNavigator();
@@ -88,11 +90,6 @@ function AppStack() {
         component={TranslatorScreen} 
         options={{ headerShown: false, title: 'Translator' }} 
       />
-      <Stack.Screen 
-        name="Phrasebook" 
-        component={PhrasebookScreen} 
-        options={{ headerShown: false, title: 'Phrasebook' }} 
-      />
       <Stack.Screen
         name="SpeechToSign"
         component={SpeechToSignScreen}
@@ -107,6 +104,21 @@ function AppStack() {
         name="Lesson"
         component={LessonScreen}
         options={{ headerShown: false, title: 'Lesson' }}
+      />
+      <Stack.Screen
+        name="Emergency"
+        component={EmergencyScreen}
+        options={{ headerShown: false, title: 'Emergency Phrases' }}
+      />
+      <Stack.Screen
+        name="Dictionary"
+        component={DictionaryScreen}
+        options={{ headerShown: false, title: 'Dictionary' }}
+      />
+      <Stack.Screen
+        name="SignDetail"
+        component={SignDetailScreen}
+        options={{ headerShown: false, title: 'Sign' }}
       />
     </Stack.Navigator>
   );

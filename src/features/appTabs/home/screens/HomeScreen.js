@@ -11,8 +11,6 @@ import {
 } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import MaterialCommunityIcons from 'react-native-vector-icons/MaterialCommunityIcons';
-import Icon from '@mdi/react';
-import { mdiSignLanguage } from '@mdi/js';
 
 import { useAuth } from '../../../auth/services/AuthContext';
 import { COLOR } from '../../../../styles/colors/theme';
@@ -33,15 +31,41 @@ function Pressable({ style, onPress, children }) {
   );
 }
 
-// ─── Translator CTA — hero card, no live camera, just launches the screen ─────
-// Background is intentionally textured (graph-paper grid + glow + pulse
-// watermark) rather than a flat fill, with a scrim layered underneath the
-// text block so contrast stays high regardless of what's behind it.
-function TranslatorCard({ onPress }) {
+// ─── Emergency button — always visible at the top of Home ─────────────────────
+function EmergencyButton({ onPress }) {
+  return (
+    <Pressable style={styles.emergencyBtn} onPress={onPress}>
+      <View style={styles.emergencyIconWrap}>
+        <MaterialCommunityIcons name="alert-octagon" size={24} color={COLOR.white} />
+      </View>
+      <View style={{ flex: 1 }}>
+        <Text style={styles.emergencyTitle}>EMERGENCY PHRASES</Text>
+        <Text style={styles.emergencySub}>Show urgent signs to medical staff fast</Text>
+      </View>
+      <MaterialCommunityIcons name="chevron-right" size={22} color={COLOR.white} />
+    </Pressable>
+  );
+}
+
+// ─── Hero card — shared by Translator, Learn and Dictionary ───────────────────
+// Same textured look (grid + glow + watermark + scrim) everywhere; only the
+// icon, copy and glow color change per card.
+function HeroCard({
+  onPress,
+  image,
+  icon,
+  watermark,
+  badge,
+  title,
+  sub,
+  ctaIcon,
+  ctaText,
+  glow = 'rgba(126,221,227,0.16)',
+}) {
   return (
     <Pressable style={styles.translatorCard} onPress={onPress}>
       {/* Decorative layers — purely visual, never intercept touches */}
-      <View style={styles.translatorGlowBottom} pointerEvents="none" />
+      <View style={[styles.translatorGlowBottom, { backgroundColor: glow }]} pointerEvents="none" />
 
       <View style={styles.translatorGridLayer} pointerEvents="none">
         {Array.from({ length: 6 }).map((_, i) => (
@@ -53,7 +77,7 @@ function TranslatorCard({ onPress }) {
       </View>
 
       <MaterialCommunityIcons
-        name="pulse"
+        name={watermark}
         size={150}
         color="rgba(126,221,227,0.10)"
         style={styles.translatorWatermark}
@@ -64,86 +88,27 @@ function TranslatorCard({ onPress }) {
 
       <View style={styles.translatorTopRow}>
         <View style={styles.translatorIconWrap}>
-          <Image 
-            source={SignLanguageImg} 
-            style={styles.translatorCustomIcon} 
-            resizeMode="contain"
-          />
+          {image ? (
+            <Image source={image} style={styles.translatorCustomIcon} resizeMode="contain" />
+          ) : (
+            <MaterialCommunityIcons name={icon} size={24} color={COLOR.white} />
+          )}
         </View>
         <View style={styles.translatorLiveBadge}>
           <View style={styles.translatorLiveDot} />
-          <Text style={styles.translatorLiveText}>AI-POWERED</Text>
+          <Text style={styles.translatorLiveText}>{badge}</Text>
         </View>
       </View>
 
-      <Text style={styles.translatorTitle}>MedSign Translator</Text>
-      <Text style={styles.translatorSub}>
-        Real-time Filipino Sign Language recognition for medical conversations
-      </Text>
+      <Text style={styles.translatorTitle}>{title}</Text>
+      <Text style={styles.translatorSub}>{sub}</Text>
 
       <View style={styles.translatorCtaRow}>
         <View style={styles.translatorCtaBtn}>
-          <MaterialCommunityIcons name="camera" size={17} color={COLOR.tealDeep} />
-          <Text style={styles.translatorCtaText}>Start Translation</Text>
+          <MaterialCommunityIcons name={ctaIcon} size={17} color={COLOR.tealDeep} />
+          <Text style={styles.translatorCtaText}>{ctaText}</Text>
         </View>
       </View>
-    </Pressable>
-  );
-}
-
-// ─── Phrasebook Card ──────────────────────────────────────────────────────────
-function PhrasebookCard({ onPress }) {
-  const PREVIEW_PHRASES = ['MASAKIT', 'HIRAP HUMINGA', 'NAHIHILO', 'LAGNAT'];
-
-  return (
-    <Pressable style={styles.phrasebookCard} onPress={onPress}>
-      <View style={styles.phrasebookCardBody}>
-        <View style={styles.phrasebookCardTop}>
-          <View style={styles.phrasebookIconWrap}>
-            <MaterialCommunityIcons name="book-open-page-variant" size={20} color={COLOR.tealBright} />
-          </View>
-          <View style={styles.phrasebookFslBadge}>
-            <Text style={styles.phrasebookFslBadgeText}>FSL</Text>
-          </View>
-        </View>
-
-        <Text style={styles.phrasebookCardTitle}>Medical Phrasebook</Text>
-        <Text style={styles.phrasebookCardSub}>30+ Filipino Sign Language phrases for medical settings</Text>
-
-        <View style={styles.phrasebookChipsRow}>
-          {PREVIEW_PHRASES.map((p) => (
-            <View key={p} style={styles.phrasebookChip}>
-              <Text style={styles.phrasebookChipText}>{p}</Text>
-            </View>
-          ))}
-          <View style={styles.phrasebookChipMore}>
-            <Text style={styles.phrasebookChipMoreText}>+26</Text>
-          </View>
-        </View>
-      </View>
-      <View style={styles.phrasebookCardDeco} pointerEvents="none">
-        <View style={styles.decoCircleOuter}>
-          <View style={styles.decoCircleInner}>
-            <MaterialCommunityIcons name="arrow-right" size={28} color={COLOR.tealBright} style={{ opacity: 0.6 }} />
-          </View>
-        </View>
-      </View>
-    </Pressable>
-  );
-}
-
-// ─── Quick Action Card ──────────────────────────────────────────────────────────
-function QuickActionCard({ icon, label, sublabel, tint, onPress }) {
-  return (
-    <Pressable style={styles.quickCard} onPress={onPress}>
-      <View style={[styles.quickIconWrap, tint && { backgroundColor: tint.bg, borderColor: tint.border }]}>
-        <MaterialCommunityIcons name={icon} size={20} color={tint ? tint.icon : COLOR.tealBright} />
-      </View>
-      <View style={{ flex: 1 }}>
-        <Text style={styles.quickLabel}>{label}</Text>
-        <Text style={styles.quickSublabel}>{sublabel}</Text>
-      </View>
-      <MaterialCommunityIcons name="chevron-right" size={18} color={COLOR.inkFaint} />
     </Pressable>
   );
 }
@@ -160,8 +125,6 @@ export default function HomeScreen() {
   const cardScale    = useRef(new Animated.Value(0.96)).current;
   const pbFade       = useRef(new Animated.Value(0)).current;
   const pbSlide      = useRef(new Animated.Value(14)).current;
-  const qaFade       = useRef(new Animated.Value(0)).current;
-  const qaSlide      = useRef(new Animated.Value(14)).current;
 
   useEffect(() => {
     Animated.stagger(90, [
@@ -177,10 +140,6 @@ export default function HomeScreen() {
         Animated.timing(pbFade,  { toValue: 1, duration: 400, useNativeDriver: true }),
         Animated.timing(pbSlide, { toValue: 0, duration: 400, useNativeDriver: true }),
       ]),
-      Animated.parallel([
-        Animated.timing(qaFade,  { toValue: 1, duration: 400, useNativeDriver: true }),
-        Animated.timing(qaSlide, { toValue: 0, duration: 400, useNativeDriver: true }),
-      ]),
     ]).start();
   }, []);
 
@@ -190,8 +149,7 @@ export default function HomeScreen() {
     <View style={styles.root}>
       <StatusBar barStyle="light-content" backgroundColor={COLOR.tealDeep} />
 
-      {/* ── Ambient page background — quiet texture so the page isn't a flat
-          fill, sits behind everything and never touches text contrast ──── */}
+      {/* ── Ambient page background ─────────────────────────────────────── */}
       <View style={styles.pageBgLayer} pointerEvents="none">
         <View style={styles.pageDotGrid}>
           {Array.from({ length: 20 }).map((_, row) => (
@@ -223,50 +181,53 @@ export default function HomeScreen() {
         contentContainerStyle={styles.scrollContent}
         showsVerticalScrollIndicator={false}
       >
-        {/* ── Translator CTA ───────────────────────────────────────────── */}
+        {/* ── Emergency + Translator ───────────────────────────────────── */}
         <Animated.View style={{ opacity: cardFade, transform: [{ scale: cardScale }], marginBottom: 26 }}>
-          <TranslatorCard onPress={() => navigation.navigate('Translator')} />
+          <EmergencyButton onPress={() => navigation.navigate('Emergency')} />
+          <HeroCard
+            onPress={() => navigation.navigate('Translator')}
+            image={SignLanguageImg}
+            watermark="pulse"
+            badge="AI-POWERED"
+            title="MedSign Translator"
+            sub="Real-time Filipino Sign Language recognition for medical conversations"
+            ctaIcon="camera"
+            ctaText="Start Translation"
+          />
         </Animated.View>
 
-        {/* ── Phrasebook ───────────────────────────────────────────────── */}
-        <Animated.View style={{ opacity: pbFade, transform: [{ translateY: pbSlide }], marginBottom: 26 }}>
-          <Text style={styles.sectionLabel}>TOOLS</Text>
-          <PhrasebookCard onPress={() => navigation.navigate('Phrasebook')} />
-        </Animated.View>
+        {/* ── Learn + Dictionary ───────────────────────────────────────── */}
+        <Animated.View style={{ opacity: pbFade, transform: [{ translateY: pbSlide }] }}>
+          <Text style={styles.sectionLabel}>LEARN & REFERENCE</Text>
 
-        {/* ── Quick Actions ────────────────────────────────────────────── */}
-        <Animated.View style={{ opacity: qaFade, transform: [{ translateY: qaSlide }] }}>
-          <Text style={styles.sectionLabel}>QUICK ACTIONS</Text>
-          <View style={styles.quickList}>
-            <QuickActionCard
-              icon="microphone"
-              label="Speech to Sign"
-              sublabel="Test voice input"
-              tint={{ bg: 'rgba(16,185,129,0.10)', border: 'rgba(16,185,129,0.20)', icon: '#059669' }}
-              onPress={() => navigation.navigate('SpeechToSign')}
-            />
-            <QuickActionCard
-              icon="history"
-              label="Recent Translations"
-              sublabel="Review your last sessions"
-              tint={{ bg: 'rgba(10,155,170,0.08)', border: 'rgba(10,155,170,0.15)', icon: COLOR.tealBright }}
-              onPress={() => navigation.navigate('History')}
-            />
-            <QuickActionCard
-              icon="bookmark"
-              label="Saved Signs"
-              sublabel="Your bookmarked phrases"
-              tint={{ bg: 'rgba(245,158,11,0.10)', border: 'rgba(245,158,11,0.20)', icon: '#D97706' }}
-              onPress={() => navigation.navigate('SavedSigns')}
-            />
-            <QuickActionCard
-              icon="school"
-              label="Learn FSL"
-              sublabel="Practice signs at your pace"
-              tint={{ bg: 'rgba(99,102,241,0.10)', border: 'rgba(99,102,241,0.20)', icon: '#6366F1' }}
+          <View style={styles.heroGap}>
+            <HeroCard
               onPress={() => navigation.navigate('Learn')}
+              icon="school"
+              watermark="school"
+              badge="LESSONS & QUIZ"
+              title="Learn FSL"
+              sub="Short lessons and sign quizzes to practice at your own pace"
+              ctaIcon="play"
+              ctaText="Start Learning"
+              glow="rgba(129,140,248,0.22)"
             />
           </View>
+
+          <View style={styles.heroGap}>
+            <HeroCard
+              onPress={() => navigation.navigate('Dictionary')}
+              icon="book-alphabet"
+              watermark="book-alphabet"
+              badge="A–Z"
+              title="FSL Dictionary"
+              sub="Look up any sign and see its meaning in English and Tagalog"
+              ctaIcon="magnify"
+              ctaText="Search Signs"
+              glow="rgba(245,158,11,0.20)"
+            />
+          </View>
+
         </Animated.View>
       </ScrollView>
     </View>
