@@ -19,6 +19,7 @@ import LessonScreen from '../appTabs/home/screens/LessonScreen';
 import EmergencyScreen from '../appTabs/home/screens/EmergencyScreen';
 import DictionaryScreen from '../appTabs/home/screens/DictionaryScreen';
 import SignDetailScreen from '../appTabs/home/screens/SignDetailScreen';
+import TranslateModeScreen from '../appTabs/home/screens/TranslateModeScreen';
 
 const Stack = createStackNavigator();
 const Tab = createBottomTabNavigator();
@@ -56,6 +57,8 @@ function AppTabs() {
 
           if (route.name === 'Home') {
             iconName = focused ? 'medical' : 'medical-outline';
+          } else if (route.name === 'Emergency') {
+            iconName = focused ? 'alert-circle' : 'alert-circle-outline';
           } else if (route.name === 'Settings') {
             iconName = focused ? 'settings' : 'settings-outline';
           }
@@ -73,6 +76,13 @@ function AppTabs() {
       })}
     >
       <Tab.Screen name="Home" component={HomeScreen} />
+      <Tab.Screen
+        name="Emergency"
+        component={EmergencyScreen}
+        options={{
+          tabBarActiveTintColor: '#EF4444', // red when active
+        }}
+      />
       <Tab.Screen name="Settings" component={SettingsScreen} />
     </Tab.Navigator>
   );
@@ -106,11 +116,6 @@ function AppStack() {
         options={{ headerShown: false, title: 'Lesson' }}
       />
       <Stack.Screen
-        name="Emergency"
-        component={EmergencyScreen}
-        options={{ headerShown: false, title: 'Emergency Phrases' }}
-      />
-      <Stack.Screen
         name="Dictionary"
         component={DictionaryScreen}
         options={{ headerShown: false, title: 'Dictionary' }}
@@ -119,6 +124,11 @@ function AppStack() {
         name="SignDetail"
         component={SignDetailScreen}
         options={{ headerShown: false, title: 'Sign' }}
+      />
+            <Stack.Screen
+        name="TranslateMode"
+        component={TranslateModeScreen}
+        options={{ headerShown: false, title: 'Translate' }}
       />
     </Stack.Navigator>
   );

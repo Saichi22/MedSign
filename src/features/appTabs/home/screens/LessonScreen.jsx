@@ -14,6 +14,7 @@ import { learnStyles as styles } from '../../../../styles/colors/LearnStyle';
 import { PHRASES, LESSON_GROUPS, phrasesForGroup, detectorLabelFor } from '../../../../data/phrasebookData';
 import { SIGN_MEDIA } from '../../../../data/signMedia';
 import { useSignPractice } from '../../../../hooks/useSignDetector';
+import { saveBestScore } from '../../../../utils/lessonScores';
 
 const SIGNS_PER_LESSON = 10;
 const OPTIONS_PER_QUESTION = 4;
@@ -423,6 +424,11 @@ export default function LessonScreen() {
       Animated.spring(sheetSlide, { toValue: 0, tension: 90, friction: 11, useNativeDriver: true }).start();
     }
   }, [answered, phase]);
+
+  // Save the best score for this category when the quiz finishes
+  useEffect(() => {
+    if (phase === 'result') saveBestScore(groupKey, score, total);
+  }, [phase]);
 
   // Keep the active sign chip in view
   const jumpRef = useRef(null);

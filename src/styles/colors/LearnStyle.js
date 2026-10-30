@@ -267,6 +267,19 @@ export const learnStyles = StyleSheet.create({
     marginTop: 6,
   },
   countText: { fontFamily: FONT.sans, fontSize: 11, fontWeight: '700' },
+  bestRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    alignSelf: 'flex-start',
+    gap: 5,
+    marginTop: 6,
+    paddingHorizontal: 9,
+    paddingVertical: 3,
+    borderRadius: RADIUS.pill,
+    backgroundColor: COLOR.tealGlow,
+  },
+  bestText: { fontFamily: FONT.sans, fontSize: 10.5, fontWeight: '700', color: COLOR.tealMid },
+  bestEmpty: { fontFamily: FONT.sans, fontSize: 10.5, color: COLOR.inkFaint, marginTop: 6 },
 
   // ── Lesson: header band (matches Phrasebook / Home headers) ────────────────
   lessonHeader: {

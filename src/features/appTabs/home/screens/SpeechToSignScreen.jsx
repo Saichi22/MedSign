@@ -6,6 +6,7 @@ import MaterialCommunityIcons from 'react-native-vector-icons/MaterialCommunityI
 import { COLOR } from '../../../../styles/colors/theme';
 import { styles } from '../../../../styles/colors/TranslatorScreenStyle';
 import { useSpeechToText } from '../../../../hooks/useSpeechToText';
+import ModeTabs from './ModeTabs';
 
 const local = StyleSheet.create({
   headerRightRow: { flexDirection: 'row', alignItems: 'center' },
@@ -81,6 +82,7 @@ export default function SpeechToSignScreen() {
         contentContainerStyle={styles.scrollContent}
         showsVerticalScrollIndicator={false}
       >
+        <ModeTabs active="speech" />
         <View style={styles.card}>
           <View style={styles.outputBox}>
             <View style={styles.outputIconWrap}>

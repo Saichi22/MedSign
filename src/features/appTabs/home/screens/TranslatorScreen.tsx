@@ -9,16 +9,40 @@ import {
   Animated,
 } from 'react-native';
 import { Camera, CameraDevice, CameraDeviceFormat } from 'react-native-vision-camera';
+import { useNavigation } from '@react-navigation/native';
 import MaterialCommunityIcons from 'react-native-vector-icons/MaterialCommunityIcons';
 
 import { COLOR } from '../../../../styles/colors/theme';
 import { styles } from '../../../../styles/colors/TranslatorScreenStyle';
 import { useSignTranslator, isMedicalLabel } from '../../../../hooks/useSignDetector';
+import ModeTabs from './ModeTabs';
 
 const localStyles = StyleSheet.create({
   headerRightRow: {
     flexDirection: 'row',
     alignItems: 'center',
+  },
+  backBtn: {
+    width: 36,
+    height: 36,
+    borderRadius: 10,
+    backgroundColor: 'rgba(255,255,255,0.10)',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.18)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 14,
+  },
+  floatingBack: {
+    position: 'absolute',
+    top: 48,
+    left: 20,
+    width: 36,
+    height: 36,
+    borderRadius: 10,
+    backgroundColor: 'rgba(13,61,64,0.10)',
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   flexFill: {
     flex: 1,
@@ -183,6 +207,7 @@ const SpellSuggestions = React.memo(function SpellSuggestions({
 });
 
 export default function SignTranslatorScreen() {
+  const navigation = useNavigation();
   const {
     hasPermission,
     requestPermission,
@@ -221,6 +246,9 @@ export default function SignTranslatorScreen() {
         <View style={styles.emptyIconWrap}>
           <MaterialCommunityIcons name="camera-off" size={28} color={COLOR.tealBright} />
         </View>
+        <TouchableOpacity style={localStyles.floatingBack} onPress={() => navigation.goBack()} activeOpacity={0.8}>
+          <MaterialCommunityIcons name="arrow-left" size={18} color={COLOR.tealDeep} />
+        </TouchableOpacity>
         <Text style={styles.emptyTitle}>Camera Access Needed</Text>
         <Text style={styles.emptyBody}>
           Sign detection requires access to your camera to read hand gestures in real time.
@@ -238,6 +266,9 @@ export default function SignTranslatorScreen() {
         <View style={styles.emptyIconWrap}>
           <MaterialCommunityIcons name="camera-off" size={28} color={COLOR.tealBright} />
         </View>
+        <TouchableOpacity style={localStyles.floatingBack} onPress={() => navigation.goBack()} activeOpacity={0.8}>
+          <MaterialCommunityIcons name="arrow-left" size={18} color={COLOR.tealDeep} />
+        </TouchableOpacity>
         <Text style={styles.emptyTitle}>No Camera Found</Text>
         <Text style={styles.emptyBody}>A camera is required for sign detection.</Text>
       </View>
@@ -256,9 +287,14 @@ export default function SignTranslatorScreen() {
       <View style={styles.header}>
         <View style={styles.headerBlob} />
         <View style={styles.headerTop}>
-          <View>
-            <Text style={styles.headerEyebrow}>LIVE TRANSLATION</Text>
-            <Text style={styles.headerTitle}>Sign Language</Text>
+          <View style={localStyles.headerRightRow}>
+            <TouchableOpacity style={localStyles.backBtn} onPress={() => navigation.goBack()} activeOpacity={0.8}>
+              <MaterialCommunityIcons name="arrow-left" size={18} color={COLOR.tealLight} />
+            </TouchableOpacity>
+            <View>
+              <Text style={styles.headerEyebrow}>LIVE TRANSLATION</Text>
+              <Text style={styles.headerTitle}>Sign Language</Text>
+            </View>
           </View>
           <View style={localStyles.headerRightRow}>
             {/* Spelling-language toggle (EN / FIL) */}
@@ -271,17 +307,6 @@ export default function SignTranslatorScreen() {
                 {spellLanguage === 'en' ? 'EN' : 'FIL'}
               </Text>
             </TouchableOpacity>
-
-            {/* Front / back camera toggle */}
-            {hasBackCamera && (
-              <TouchableOpacity
-                onPress={toggleCamera}
-                style={[styles.liveBadge, { marginRight: 8 }]}
-                activeOpacity={0.8}
-              >
-                <MaterialCommunityIcons name="camera-flip" size={16} color={COLOR.tealBright} />
-              </TouchableOpacity>
-            )}
 
             {/* Voice mute/unmute toggle */}
             <TouchableOpacity
@@ -311,15 +336,17 @@ export default function SignTranslatorScreen() {
         contentContainerStyle={styles.scrollContent}
         showsVerticalScrollIndicator={false}
       >
+        
+      <ModeTabs active="sign" />
         {!isModelReady && <ModelBanner modelState={modelState} />}
 
         <View style={[styles.card, isMedicalSign && styles.cardMedical]}>
           <View style={styles.cardHeader}>
-            <View style={styles.cardTitleRow}>
+            <View style={[styles.cardTitleRow, { flex: 1, marginRight: 10 }]}>
               <View style={styles.historyIconWrap}>
                 <MaterialCommunityIcons name="camera" size={20} color={COLOR.tealDeep} />
               </View>
-              <View>
+              <View style={{ flex: 1 }}>
                 <Text style={styles.cardTitle}>Camera Input</Text>
                 <Text style={styles.cardSub}>
                   {cameraPosition === 'front'
@@ -328,6 +355,18 @@ export default function SignTranslatorScreen() {
                 </Text>
               </View>
             </View>
+            {hasBackCamera && (
+              <TouchableOpacity
+                onPress={toggleCamera}
+                style={styles.cardHeaderChip}
+                activeOpacity={0.8}
+              >
+                <MaterialCommunityIcons name="camera-flip" size={14} color={COLOR.tealDeep} />
+                <Text style={styles.cardHeaderChipText}>
+                  {cameraPosition === 'front' ? 'FRONT' : 'BACK'}
+                </Text>
+              </TouchableOpacity>
+            )}
           </View>
 
           <CameraView cameraRef={cameraRef} device={device} format={format} />

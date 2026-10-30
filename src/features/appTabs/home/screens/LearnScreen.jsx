@@ -1,12 +1,13 @@
 // LearnScreen.jsx
-import React, { useRef, useEffect } from 'react';
+import React, { useRef, useEffect, useState, useCallback } from 'react';
 import { View, Text, TouchableOpacity, ScrollView, StatusBar, Animated } from 'react-native';
-import { useNavigation } from '@react-navigation/native';
+import { useNavigation, useFocusEffect } from '@react-navigation/native';
 import MaterialCommunityIcons from 'react-native-vector-icons/MaterialCommunityIcons';
 
 import { COLOR } from '../../../../styles/colors/theme';
 import { learnStyles as styles } from '../../../../styles/colors/LearnStyle';
 import { PHRASES, LESSON_GROUPS, phrasesForGroup } from '../../../../data/phrasebookData';
+import { getBestScores, formatScoreDate } from '../../../../utils/lessonScores';
 
 const PREVIEW_COUNT = 3;
 const NODE_CENTER = 36; // marginTop (14) + half node (22)
@@ -58,7 +59,7 @@ function Hero({ onStart, firstTitle }) {
 }
 
 // ─── One stop on the lesson path ─────────────────────────────────────────────
-function PathRow({ group, isFirst, isLast, onPress }) {
+function PathRow({ group, best, isFirst, isLast, onPress }) {
   const scale = useRef(new Animated.Value(1)).current;
   const pressIn = () => Animated.spring(scale, { toValue: 0.97, useNativeDriver: true, tension: 120, friction: 8 }).start();
   const pressOut = () => Animated.spring(scale, { toValue: 1, useNativeDriver: true, tension: 120, friction: 8 }).start();
@@ -106,6 +107,16 @@ function PathRow({ group, isFirst, isLast, onPress }) {
                 <MaterialCommunityIcons name="hand-wave-outline" size={13} color={group.tint.icon} />
                 <Text style={[styles.countText, { color: group.tint.icon }]}>{phrases.length} signs</Text>
               </View>
+              {best ? (
+                <View style={styles.bestRow}>
+                  <MaterialCommunityIcons name="trophy-outline" size={12} color={COLOR.tealMid} />
+                  <Text style={styles.bestText}>
+                    Best: {best.score}/{best.total} · {formatScoreDate(best.date)}
+                  </Text>
+                </View>
+              ) : (
+                <Text style={styles.bestEmpty}>No quiz score yet</Text>
+              )}
             </View>
             <View style={[styles.startBtn, { backgroundColor: group.tint.bg }]}>
               <MaterialCommunityIcons name="play" size={20} color={group.tint.icon} />
@@ -133,6 +144,14 @@ function PathRow({ group, isFirst, isLast, onPress }) {
 export default function LearnScreen() {
   const navigation = useNavigation();
   const openLesson = (key) => navigation.navigate('Lesson', { groupKey: key });
+
+  // Reload best scores every time this screen regains focus (e.g. after a quiz)
+  const [bests, setBests] = useState({});
+  useFocusEffect(
+    useCallback(() => {
+      getBestScores().then(setBests);
+    }, []),
+  );
 
   // One orchestrated entrance: hero, then each lesson in turn.
   const anims = useRef(Array.from({ length: LESSON_GROUPS.length + 1 }, () => new Animated.Value(0))).current;
@@ -177,6 +196,7 @@ export default function LearnScreen() {
             <Animated.View key={group.key} style={enter(anims[i + 1])}>
               <PathRow
                 group={group}
+                best={bests[group.key]}
                 isFirst={i === 0}
                 isLast={i === LESSON_GROUPS.length - 1}
                 onPress={() => openLesson(group.key)}

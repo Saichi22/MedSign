@@ -31,22 +31,6 @@ function Pressable({ style, onPress, children }) {
   );
 }
 
-// ─── Emergency button — always visible at the top of Home ─────────────────────
-function EmergencyButton({ onPress }) {
-  return (
-    <Pressable style={styles.emergencyBtn} onPress={onPress}>
-      <View style={styles.emergencyIconWrap}>
-        <MaterialCommunityIcons name="alert-octagon" size={24} color={COLOR.white} />
-      </View>
-      <View style={{ flex: 1 }}>
-        <Text style={styles.emergencyTitle}>EMERGENCY PHRASES</Text>
-        <Text style={styles.emergencySub}>Show urgent signs to medical staff fast</Text>
-      </View>
-      <MaterialCommunityIcons name="chevron-right" size={22} color={COLOR.white} />
-    </Pressable>
-  );
-}
-
 // ─── Hero card — shared by Translator, Learn and Dictionary ───────────────────
 // Same textured look (grid + glow + watermark + scrim) everywhere; only the
 // icon, copy and glow color change per card.
@@ -183,9 +167,8 @@ export default function HomeScreen() {
       >
         {/* ── Emergency + Translator ───────────────────────────────────── */}
         <Animated.View style={{ opacity: cardFade, transform: [{ scale: cardScale }], marginBottom: 26 }}>
-          <EmergencyButton onPress={() => navigation.navigate('Emergency')} />
           <HeroCard
-            onPress={() => navigation.navigate('Translator')}
+            onPress={() => navigation.navigate('TranslateMode')}
             image={SignLanguageImg}
             watermark="pulse"
             badge="AI-POWERED"
@@ -230,6 +213,7 @@ export default function HomeScreen() {
 
         </Animated.View>
       </ScrollView>
+
     </View>
   );
 }

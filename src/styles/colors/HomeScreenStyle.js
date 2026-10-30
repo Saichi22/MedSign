@@ -518,16 +518,19 @@ export const styles = StyleSheet.create({
   },
 
   // ── Emergency button (top of Home) ──────────────────────────────────────────
+  // ── Emergency button (top of Home) ──────────────────────────────────────────
   emergencyBtn: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 12,
-    backgroundColor: '#DC2626',
+    backgroundColor: COLOR.tealDeep,
+    borderWidth: 1,
+    borderColor: 'rgba(126,221,227,0.30)',
     borderRadius: RADIUS.lg,
     paddingHorizontal: 16,
     height: 66,
-    marginBottom: 16,
-    shadowColor: '#DC2626',
+    marginBottom: 0,
+    shadowColor: COLOR.tealDeep,
     shadowOffset: { width: 0, height: 6 },
     shadowOpacity: 0.28,
     shadowRadius: 14,
@@ -537,7 +540,9 @@ export const styles = StyleSheet.create({
     width: 40,
     height: 40,
     borderRadius: RADIUS.sm,
-    backgroundColor: 'rgba(255,255,255,0.20)',
+    backgroundColor: 'rgba(126,221,227,0.16)',
+    borderWidth: 1,
+    borderColor: 'rgba(126,221,227,0.30)',
     alignItems: 'center',
     justifyContent: 'center',
   },
