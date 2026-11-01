@@ -22,6 +22,27 @@ const localStyles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
   },
+  // Left side of the header: shrinks so the badges on the right never get clipped
+  headerLeftRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flex: 1,
+    minWidth: 0,
+    marginRight: 10,
+  },
+  headerTitleWrap: {
+    flex: 1,
+    minWidth: 0,
+  },
+  // Right side of the header: keeps its natural width
+  headerBadgesRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flexShrink: 0,
+  },
+  headerBadgeGap: {
+    marginRight: 6,
+  },
   backBtn: {
     width: 36,
     height: 36,
@@ -287,20 +308,22 @@ export default function SignTranslatorScreen() {
       <View style={styles.header}>
         <View style={styles.headerBlob} />
         <View style={styles.headerTop}>
-          <View style={localStyles.headerRightRow}>
+          <View style={localStyles.headerLeftRow}>
             <TouchableOpacity style={localStyles.backBtn} onPress={() => navigation.goBack()} activeOpacity={0.8}>
               <MaterialCommunityIcons name="arrow-left" size={18} color={COLOR.tealLight} />
             </TouchableOpacity>
-            <View>
-              <Text style={styles.headerEyebrow}>LIVE TRANSLATION</Text>
-              <Text style={styles.headerTitle}>Sign Language</Text>
+            <View style={localStyles.headerTitleWrap}>
+              <Text style={styles.headerEyebrow} numberOfLines={1}>LIVE TRANSLATION</Text>
+              <Text style={styles.headerTitle} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.75}>
+                Sign Language
+              </Text>
             </View>
           </View>
-          <View style={localStyles.headerRightRow}>
+          <View style={localStyles.headerBadgesRow}>
             {/* Spelling-language toggle (EN / FIL) */}
             <TouchableOpacity
               onPress={toggleSpellLanguage}
-              style={[styles.liveBadge, { marginRight: 8 }]}
+              style={[styles.liveBadge, localStyles.headerBadgeGap]}
               activeOpacity={0.8}
             >
               <Text style={[styles.liveText, { color: COLOR.tealBright }]}>
@@ -311,7 +334,7 @@ export default function SignTranslatorScreen() {
             {/* Voice mute/unmute toggle */}
             <TouchableOpacity
               onPress={toggleVoice}
-              style={[styles.liveBadge, { marginRight: 8 }]}
+              style={[styles.liveBadge, localStyles.headerBadgeGap]}
               activeOpacity={0.8}
             >
               <MaterialCommunityIcons

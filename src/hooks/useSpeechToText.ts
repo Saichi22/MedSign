@@ -11,7 +11,7 @@ export type SttLanguage = 'en-US' | 'fil-PH';
 const Native = NativeModules.SpeechRecognizerModule;
 
 // Android SpeechRecognizer error codes that are not real failures
-const BENIGN_CODES = new Set([5, 6, 7]); // client, speech timeout, no match
+const BENIGN_CODES = new Set([5, 6, 7, 11]); // client, speech timeout, no match, server disconnected
 
 async function ensureMicPermission(): Promise<boolean> {
   if (Platform.OS !== 'android') return true;

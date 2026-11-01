@@ -262,7 +262,7 @@ export function useSignTranslator() {
   const [isSpelling, setIsSpelling] = useState(false);
   const [spellBuffer, setSpellBuffer] = useState<string>('');
 
-  const [spellLanguage, setSpellLanguage] = useState<SpellLanguage>('en');
+  const [spellLanguage, setSpellLanguage] = useState<SpellLanguage>('fil');
   const spellLanguageRef = useRef<SpellLanguage>(spellLanguage);
   useEffect(() => {
     spellLanguageRef.current = spellLanguage;

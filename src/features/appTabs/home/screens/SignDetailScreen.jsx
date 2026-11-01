@@ -15,11 +15,11 @@ import {
   StyleSheet,
   Platform,
 } from 'react-native';
-import { useNavigation, useRoute } from '@react-navigation/native';
+import { useNavigation, useRoute, StackActions } from '@react-navigation/native';
 import MaterialCommunityIcons from 'react-native-vector-icons/MaterialCommunityIcons';
 
 import { COLOR, FONT, RADIUS, WINDOW_WIDTH as W } from '../../../../styles/colors/theme';
-import { LESSON_GROUPS, phraseById, relatedPhrases, detectorLabelFor } from '../../../../data/phrasebookData';
+import { LESSON_GROUPS, PHRASES, phraseById, relatedPhrases, detectorLabelFor } from '../../../../data/phrasebookData';
 import { SIGN_MEDIA } from '../../../../data/signMedia';
 
 export default function SignDetailScreen() {
@@ -66,7 +66,35 @@ export default function SignDetailScreen() {
     );
   }
 
-  const next = related[0];
+  // Previous sign = the SignDetail screen directly beneath this one in the stack
+  // (only exists if the user got here via a "related word" push).
+  const navState = navigation.getState();
+
+  // Header back: pop every stacked SignDetail so we land on the Dictionary.
+  const goToDictionary = () => {
+    const count = navState.routes.filter((r) => r.name === 'SignDetail').length;
+    navigation.dispatch(StackActions.pop(Math.max(1, count)));
+  };
+  const prevRoute = navState.routes[navState.index - 1];
+  const prevPhrase =
+    prevRoute?.name === 'SignDetail' ? phraseById(prevRoute.params?.id) : null;
+
+  // Next = first related sign (then same-category sign) that we haven't already
+  // been through. Never repeats the current or previous sign.
+  const visitedIds = new Set(
+    navState.routes
+      .slice(0, navState.index + 1)
+      .filter((r) => r.name === 'SignDetail')
+      .map((r) => r.params?.id),
+  );
+  const candidates = [
+    ...related,
+    ...PHRASES.filter((p) => p.category === phrase.category),
+  ];
+  const next =
+    candidates.find((c) => c.id !== phrase.id && !visitedIds.has(c.id)) ||
+    candidates.find((c) => c.id !== phrase.id && c.id !== prevPhrase?.id) ||
+    null;
 
   return (
     <View style={s.root}>
@@ -76,7 +104,7 @@ export default function SignDetailScreen() {
       <View style={s.header}>
         <View style={s.headerBlob} />
         <View style={s.headerRow}>
-          <TouchableOpacity style={s.backBtn} onPress={() => navigation.goBack()} activeOpacity={0.8}>
+          <TouchableOpacity style={s.backBtn} onPress={goToDictionary} activeOpacity={0.8}>
             <MaterialCommunityIcons name="arrow-left" size={18} color={COLOR.tealLight} />
           </TouchableOpacity>
           <View style={{ flex: 1 }}>
@@ -208,19 +236,39 @@ export default function SignDetailScreen() {
               })}
             </View>
 
-            <TouchableOpacity
-              style={s.nextBtn}
-              onPress={() => navigation.push('SignDetail', { id: next.id })}
-              activeOpacity={0.88}
-            >
-              <View style={{ flex: 1 }}>
-                <Text style={s.nextLabel}>NEXT RELATED WORD</Text>
-                <Text style={s.nextName} numberOfLines={1}>{next.fsl}</Text>
-              </View>
-              <View style={s.nextArrow}>
-                <MaterialCommunityIcons name="arrow-right" size={22} color={COLOR.tealDeep} />
-              </View>
-            </TouchableOpacity>
+            <View style={s.navRow}>
+              {prevPhrase && (
+                <TouchableOpacity
+                  style={s.prevBtn}
+                  onPress={() => navigation.goBack()}
+                  activeOpacity={0.88}
+                >
+                  <View style={s.prevArrow}>
+                    <MaterialCommunityIcons name="arrow-left" size={22} color={COLOR.tealDeep} />
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <Text style={s.prevLabel} numberOfLines={1}>PREVIOUS</Text>
+                    <Text style={s.prevName} numberOfLines={1}>{prevPhrase.fsl}</Text>
+                  </View>
+                </TouchableOpacity>
+              )}
+
+              {next && (
+                <TouchableOpacity
+                  style={s.nextBtn}
+                  onPress={() => navigation.push('SignDetail', { id: next.id })}
+                  activeOpacity={0.88}
+                >
+                  <View style={{ flex: 1 }}>
+                    <Text style={s.nextLabel} numberOfLines={1}>NEXT RELATED</Text>
+                    <Text style={s.nextName} numberOfLines={1}>{next.fsl}</Text>
+                  </View>
+                  <View style={s.nextArrow}>
+                    <MaterialCommunityIcons name="arrow-right" size={22} color={COLOR.tealDeep} />
+                  </View>
+                </TouchableOpacity>
+              )}
+            </View>
           </Animated.View>
         )}
       </ScrollView>
@@ -445,15 +493,37 @@ const s = StyleSheet.create({
     borderTopWidth: 1,
     borderTopColor: COLOR.borderCard,
   },
+  navRow: { flexDirection: 'row', gap: 10, marginTop: 20 },
   nextBtn: {
+    flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
     height: 60,
-    marginTop: 20,
     paddingLeft: 18,
     paddingRight: 8,
     borderRadius: RADIUS.md,
     backgroundColor: COLOR.tealDeep,
+  },
+  prevBtn: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    height: 60,
+    paddingLeft: 8,
+    paddingRight: 14,
+    gap: 10,
+    borderRadius: RADIUS.md,
+    backgroundColor: COLOR.tealDeep,
+  },
+  prevLabel: { fontFamily: FONT.sans, fontSize: 10, fontWeight: '700', color: 'rgba(255,255,255,0.6)', letterSpacing: 1.2 },
+  prevName: { fontFamily: FONT.serif, fontSize: 17, color: COLOR.white, marginTop: 2 },
+  prevArrow: {
+    width: 44,
+    height: 44,
+    borderRadius: RADIUS.sm,
+    backgroundColor: COLOR.tealLight,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   nextLabel: { fontFamily: FONT.sans, fontSize: 10, fontWeight: '700', color: 'rgba(255,255,255,0.6)', letterSpacing: 1.2 },
   nextName: { fontFamily: FONT.serif, fontSize: 17, color: COLOR.white, marginTop: 2 },

@@ -72,6 +72,10 @@ function SectionHeader({ title, icon }) {
 // ─── Main SettingsScreen ──────────────────────────────────────────────────────
 export default function SettingsScreen() {
   const { user, logout } = useAuth();
+  // Only accounts created with email + password get the Account section.
+  // Google / Facebook users manage these details through their provider.
+  const isEmailAccount = !!user?.providerData?.some(p => p.providerId === 'password');
+
   const [notificationsEnabled, setNotificationsEnabled] = React.useState(true);
   const [biometricsEnabled, setBiometricsEnabled] = React.useState(false);
   const [aslSoundEnabled, setAslSoundEnabled] = React.useState(true);
@@ -156,13 +160,17 @@ export default function SettingsScreen() {
           </TouchableOpacity>
         </View>
 
-        {/* ── Account ───────────────────────────────────────────────── */}
-        <SectionHeader title="ACCOUNT" icon="account-circle-outline" />
-        <View style={styles.card}>
-          <SettingsRow icon="account-edit-outline" label="Edit Profile" sublabel="Name, photo, specialty" />
-          <SettingsRow icon="email-outline" label="Email Address" sublabel={user?.email || '—'} />
-          <SettingsRow icon="lock-reset" label="Change Password" sublabel="Last changed 30 days ago" isLast />
-        </View>
+        {isEmailAccount && (
+          <>
+          {/* ── Account ───────────────────────────────────────────────── */}
+          <SectionHeader title="ACCOUNT" icon="account-circle-outline" />
+          <View style={styles.card}>
+            <SettingsRow icon="account-edit-outline" label="Edit Profile" sublabel="Name, photo, specialty" />
+            <SettingsRow icon="email-outline" label="Email Address" sublabel={user?.email || '—'} />
+            <SettingsRow icon="lock-reset" label="Change Password" sublabel="Last changed 30 days ago" isLast />
+          </View>
+          </>
+        )}
 
         {/* ── Preferences ───────────────────────────────────────────── */}
         <SectionHeader title="PREFERENCES" icon="tune-variant" />
@@ -214,14 +222,6 @@ export default function SettingsScreen() {
           />
           <SettingsRow icon="cellphone-lock" label="Active Sessions" sublabel="Manage logged-in devices" />
           <SettingsRow icon="two-factor-authentication" label="Two-Factor Auth" sublabel="Add extra security layer" isLast />
-        </View>
-
-        {/* ── Hospital ──────────────────────────────────────────────── */}
-        <SectionHeader title="HOSPITAL" icon="hospital-building" />
-        <View style={styles.card}>
-          <SettingsRow icon="office-building-outline" label="Department" sublabel="General Medicine" />
-          <SettingsRow icon="card-account-details-outline" label="Staff ID" sublabel="View credentials & clearance" />
-          <SettingsRow icon="calendar-clock-outline" label="Shift Schedule" sublabel="View your roster" isLast />
         </View>
 
         {/* ── Support ───────────────────────────────────────────────── */}

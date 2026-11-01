@@ -10,6 +10,17 @@ import ModeTabs from './ModeTabs';
 
 const local = StyleSheet.create({
   headerRightRow: { flexDirection: 'row', alignItems: 'center' },
+  backBtn: {
+    width: 36,
+    height: 36,
+    borderRadius: 10,
+    backgroundColor: 'rgba(255,255,255,0.10)',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.18)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 14,
+  },
   flexFill: { flex: 1 },
   transcript: { fontSize: 22, lineHeight: 30, color: COLOR.tealDeep, marginTop: 6 },
   transcriptPartial: { opacity: 0.55 },
@@ -45,10 +56,10 @@ export default function SpeechToSignScreen() {
           <View style={local.headerRightRow}>
             <TouchableOpacity
               onPress={() => navigation.goBack()}
-              style={[styles.liveBadge, { marginRight: 12 }]}
+              style={local.backBtn}
               activeOpacity={0.8}
             >
-              <MaterialCommunityIcons name="arrow-left" size={16} color={COLOR.tealBright} />
+              <MaterialCommunityIcons name="arrow-left" size={18} color={COLOR.tealLight} />
             </TouchableOpacity>
             <View>
               <Text style={styles.headerEyebrow}>SPEECH TO SIGN</Text>
