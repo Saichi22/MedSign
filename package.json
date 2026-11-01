@@ -27,6 +27,7 @@
     "react": "19.2.3",
     "react-native": "0.84.0",
     "react-native-fast-tflite": "^3.0.1",
+    "react-native-fbsdk-next": "^13.4.3",
     "react-native-fs": "^2.20.0",
     "react-native-gesture-handler": "^2.30.0",
     "react-native-nitro-image": "^0.15.1",

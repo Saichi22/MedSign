@@ -1,3 +1,5 @@
 <resources>
     <string name="app_name">PRT</string>
+    <string name="facebook_app_id">1109413051996681</string>
+    <string name="facebook_client_token">6e17603b87cc66b9696052313f7c7842</string>
 </resources>

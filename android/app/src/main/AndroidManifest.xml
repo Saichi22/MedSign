@@ -9,6 +9,8 @@
       <intent>
         <action android:name="android.speech.RecognitionService" />
       </intent>
+      <!-- ADDED: lets the app detect the Facebook app -->
+      <package android:name="com.facebook.katana" />
     </queries>
 
     <application
@@ -20,6 +22,15 @@
       android:theme="@style/AppTheme"
       android:usesCleartextTraffic="${usesCleartextTraffic}"
       android:supportsRtl="true">
+
+      <!-- ADDED: Facebook App ID and Client Token -->
+      <meta-data
+        android:name="com.facebook.sdk.ApplicationId"
+        android:value="@string/facebook_app_id" />
+      <meta-data
+        android:name="com.facebook.sdk.ClientToken"
+        android:value="@string/facebook_client_token" />
+
       <activity
         android:name=".MainActivity"
         android:label="@string/app_name"
