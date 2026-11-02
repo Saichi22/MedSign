@@ -307,9 +307,7 @@ export function useMotionSignTranslator() {
 
       const frame = has ? buildFrame(hands as number[][], mirror, rotRef.current) : new Float32Array(FEATURES);
 
-      if (sign.length === 0) {
-        setDetection(null); // a new sign starts: clear the last result
-      }
+      // A new sign starting does NOT clear the last result: it stays on screen until a new result replaces it.
       sign.push({ f: frame, h: has });
       missRef.current = has ? 0 : missRef.current + 1;
 
@@ -387,7 +385,7 @@ export function useMotionSignTranslator() {
 
   // ─── Voice ─────────────────────────────────────────────────────────
   const [isVoiceEnabled, setIsVoiceEnabled] = useState(true);
-  const lastSpokenLabelRef = useRef<string | null>(null);
+  const lastSpokenRef = useRef<SignDetection | null>(null);
 
   useEffect(() => {
     Speech.configure({ rate: 0.85, pitch: 1.0, ducking: true });
@@ -399,11 +397,12 @@ export function useMotionSignTranslator() {
   useEffect(() => {
     if (!isVoiceEnabled) return;
     if (!detection) {
-      lastSpokenLabelRef.current = null;
+      lastSpokenRef.current = null;
       return;
     }
-    if (detection.label === lastSpokenLabelRef.current) return;
-    lastSpokenLabelRef.current = detection.label;
+    // Speak every NEW result (even the same word twice in a row), but not the same result again.
+    if (detection === lastSpokenRef.current) return;
+    lastSpokenRef.current = detection;
 
     Speech.stop()
       .catch(() => {})
