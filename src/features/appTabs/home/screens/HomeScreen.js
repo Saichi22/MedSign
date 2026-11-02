@@ -175,6 +175,7 @@ export default function HomeScreen() {
         {/* ── Emergency + Translator ───────────────────────────────────── */}
         <Animated.View style={{ opacity: cardFade, transform: [{ scale: cardScale }], marginBottom: 26 }}>
           <Text style={styles.sectionLabel}>Sign Language Translator</Text>
+          <View style={styles.heroGap}>
           <HeroCard
             onPress={() => navigation.navigate('TranslateMode')}
             icon="hand-wave"
@@ -185,7 +186,7 @@ export default function HomeScreen() {
             ctaIcon="camera"
             ctaText="Start Translation"
           />
-
+          </View>
           <View style={styles.heroGap}>
             <HeroCard
               onPress={() => navigation.navigate('MotionTranslator')}
