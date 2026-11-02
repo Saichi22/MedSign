@@ -1,12 +1,14 @@
 // hooks/useMotionSignDetector.ts
-// Motion-based sign detection: MediaPipe hand landmarks (native frame processor plugin)
-// -> wrist-relative normalization -> RECORD the whole sign (hand appears -> hand leaves)
-// -> resample to 30 frames -> FSL16 GRU (.tflite) -> one result per sign.
-// Spec: [1, 30, 126] float32 in, [1, 16] float32 softmax out.
+// Sign detection with the FSL16 GRU, following the model README (FSL16 GRU - Android Integration Spec):
+//   MediaPipe hand landmarks (native plugin) -> wrist-relative per hand (slot = detection order,
+//   missing hand = zeros) -> samples taken every ~133 ms -> when the hand leaves, the finished sign is
+//   placed in the MIDDLE of a 30-sample (~4 s) window padded with zeros -> [1,30,126] -> [1,16] softmax.
 //
-// Checked offline against a labelled FATHER training clip: the model needs mirrored
-// landmarks (mirror ON), raw x/y scale (1,1) and the hand in slot 0. With those, the sign
-// stretched over 30 frames gives FATHER ~91%. With mirror OFF the same clip gives KNOW 100%.
+// Verified offline on 10 labelled clips with the SAME .tflite: this method (mirror OFF) got 9/10 right
+// (47/50 across start offsets). The old "record the sign, stretch it to 30 frames, mirror ON" method got 4/10.
+// The sign is NOT stretched to fill 30 frames: it sits inside a 4 s window and the rest is zeros.
+// Classifying only after the hand leaves matters: the first half of MOTHER looks like KNOW, so answering
+// while the sign is still in progress gave KNOW for MOTHER. Live simulation: 37/40 this way vs 30/40.
 import { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import { Animated, Easing, LayoutAnimation, Platform, UIManager } from 'react-native';
 import {
@@ -41,49 +43,39 @@ const SEQ_LEN = 30;
 const LANDMARKS = 21;
 const HAND_FEATURES = LANDMARKS * 3; // 63
 const FEATURES = HAND_FEATURES * 2; // 126
-const PROCESS_FPS = 20;            // frame-processor rate (was 7.5: too slow for a ~1s sign)
-const SAMPLE_INTERVAL_MS = 40;     // min gap between recorded frames (~20-25 fps max)
-const CONF_THRESHOLD = 0.7;        // tune with real testing
+
+// README: ~133 ms between samples (~7.5 per second) -> 30 samples ~ 4 seconds.
+const PROCESS_FPS = 7.5;           // frame-processor rate = model's training sample rate
+const SAMPLE_INTERVAL_MS = 90;     // just drops duplicate ticks; real spacing comes from PROCESS_FPS
+
+const CONF_THRESHOLD = 0.7;        // README: starting value, tune with real testing
 const MIN_MARGIN = 0.25;           // top1 must beat top2 by at least this much
+const MIN_HAND_FRAMES = 4;         // fewer hand samples than this is a blip, not a sign
+const END_GAP_SAMPLES = 3;         // hand gone this many samples (~0.4 s) = sign finished
 
-// Record-then-classify
-const END_GAP_MS = 400;            // hand gone this long = sign finished
-const MIN_RECORD_FRAMES = 6;       // shorter than this is a blip, not a sign
-const MAX_RECORD_FRAMES = 45;      // ~2.2s safety cap, then classify what we have (signs are ~1-2s)
-// A sign also ends when the hand PAUSES (stays in view but stops moving) - otherwise a hand
-// resting in frame would record forever and never produce a result.
-// Hysteresis: MOVE_START is well above STILL_STEP so landmark jitter can't re-trigger a recording.
-// Steps are smoothed (EMA) before being compared. Tune STILL_STEP from the on-screen debug "step"
-// value while holding your hand still: set it ~30% above that.
-const MOVE_START = 0.03;           // per-step movement that starts a recording
-const STILL_STEP = 0.015;          // below this a step counts as "not moving"
-const STILL_END_MS = 500;          // not moving this long = sign finished
-const REARM_CALM_FRAMES = 4;       // after a result, hand must be calm this many frames before a new sign can start
-const PRE_ROLL = 3;                // frames kept from just before the movement started
-const MOTION_MIN = 0.012;          // resting hand ~0.004, a real sign ~0.03 (whole-sign average)
-
-// Set true while tuning: logs top-3 scores, margin and recording length for every sign.
+// Set true while tuning: logs top-3 scores for every prediction.
 const DEBUG_GRU = true;
 
 // Landmark rotation (degrees clockwise) that makes hands come out upright.
 // Verify on the phone: with a hand held fingers-up the debug line must say UPRIGHT.
 const DEFAULT_ROTATION = 270;
 
-// The model was trained on mirrored (selfie-style) landmarks. A plain camera view of a
-// signer (front or back camera buffer) needs mirror ON to match. Toggle on screen to compare.
-const MIRROR_FRONT_CAMERA = true;
-const MIRROR_BACK_CAMERA = true;
+// README tests (10 clips, same model) were best with mirror OFF (raw camera view of the signer).
+// Toggle on screen to compare on the phone.
+const MIRROR_FRONT_CAMERA = false;
+const MIRROR_BACK_CAMERA = false;
 
 export type CameraPosition = 'front' | 'back';
 export type MotionStatus = 'idle' | 'noHand' | 'collecting' | 'still' | 'unknown' | 'ready';
 export type SignDetection = { label: string; confidence: number };
 type Prediction = SignDetection & { idx: number; margin: number };
+type Sample = { f: Float32Array; h: boolean };
 
 // Native plugin (HandLandmarkerPlugin.kt). Null if it isn't registered in this build.
 const handsPlugin = VisionCameraProxy.initFrameProcessorPlugin('detectHands', {});
 export const HAND_PLUGIN_AVAILABLE = handsPlugin != null;
 
-// Raw normalized deltas. The old 0.75 / 1.333 factors lowered FATHER 91% -> 59% on the test clip.
+// Raw normalized deltas (README 4.2).
 const X_SCALE = 1;
 const Y_SCALE = 1;
 const Z_SCALE = 1;
@@ -133,27 +125,18 @@ function toSpeechText(label: string): string {
   return label.toLowerCase();
 }
 
-// Average per-step movement over the whole resampled sign: wrist travel + finger/shape change.
-function motionScore(seq: Float32Array[], wrists: number[][]): number {
-  const n = Math.min(seq.length, wrists.length);
-  if (n < 2) return 0;
-  let sum = 0;
-  for (let t = 1; t < n; t++) {
-    let d = 0;
-    for (let k = 0; k < FEATURES; k++) d += Math.abs(seq[t][k] - seq[t - 1][k]);
-    d /= FEATURES;
-    const wd = Math.hypot(wrists[t][0] - wrists[t - 1][0], wrists[t][1] - wrists[t - 1][1]);
-    sum += d + wd;
-  }
-  return sum / (n - 1);
-}
-
-// Stretch/shrink a recording of any length to exactly SEQ_LEN frames (evenly spaced).
-function resampleTo<T>(items: T[], n: number): T[] {
-  const out: T[] = [];
-  const last = items.length - 1;
-  for (let i = 0; i < n; i++) out.push(items[Math.round((i * last) / (n - 1))]);
-  return out;
+// Put the finished sign in the middle of a 30-sample window; the rest is zeros ("no hand"),
+// like the idle time around a sign in the training clips.
+function centreWindow(sign: Sample[]): Sample[] {
+  const body = sign.slice(0, SEQ_LEN);
+  const pad = SEQ_LEN - body.length;
+  const before = Math.floor(pad / 2);
+  const blank = (): Sample => ({ f: new Float32Array(FEATURES), h: false });
+  return [
+    ...Array.from({ length: before }, blank),
+    ...body,
+    ...Array.from({ length: pad - before }, blank),
+  ];
 }
 
 // ─── Hook ────────────────────────────────────────────────────────────────────
@@ -182,23 +165,22 @@ export function useMotionSignTranslator() {
   // ─── State ─────────────────────────────────────────────────────────
   const [isDetecting, setIsDetecting] = useState(false);
   const [detection, setDetection] = useState<SignDetection | null>(null);
-  const [status, setStatus] = useState<MotionStatus>('idle');
-  const [progress, setProgress] = useState(0); // frames recorded so far (bar fills toward MAX_RECORD_FRAMES)
+  const [status, setStatusState] = useState<MotionStatus>('idle');
+  const [progress, setProgress] = useState(0); // hand samples currently in the 4 s window
+
+  const statusRef = useRef<MotionStatus>('idle');
+  const setStatus = useCallback((s: MotionStatus) => {
+    if (statusRef.current !== s) {
+      statusRef.current = s;
+      setStatusState(s);
+    }
+  }, []);
 
   const isDetectingRef = useRef(false);
   const detectingSV = useSharedValue(false); // read inside the frame processor worklet
-  const recordRef = useRef<Float32Array[]>([]); // frames of the sign being recorded
-  const wristRef = useRef<number[][]>([]);       // wrist x/y per recorded frame (for the motion check)
   const lastSampleRef = useRef(0);
-  const lastHandMsRef = useRef(0);               // when a hand was last seen
-  const prevFrameRef = useRef<Float32Array | null>(null);
-  const prevWristRef = useRef<number[] | null>(null);
-  const preRollRef = useRef<{ f: Float32Array; w: number[] }[]>([]);
-  const stillSinceRef = useRef(0);               // when the hand stopped moving (0 = moving)
-  const stillCountRef = useRef(0);               // recorded frames since it stopped
-  const smoothStepRef = useRef(0);               // EMA of per-frame movement
-  const rearmRef = useRef(false);                // true after a result: wait for a calm hand before the next sign
-  const calmRef = useRef(0);                     // consecutive calm frames while waiting to re-arm
+  const signRef = useRef<Sample[]>([]);           // samples of the sign in progress (hand first seen -> now)
+  const missRef = useRef(0);                      // consecutive samples with no hand
   const topRef = useRef('');
   const selfTestRef = useRef('');
   const [debugText, setDebugText] = useState('');
@@ -239,10 +221,9 @@ export function useMotionSignTranslator() {
               return `${FSL16_LABELS[b]} ${Math.round(arr[b] * 100)}`;
             };
             const zeros = new Float32Array(SEQ_LEN * FEATURES);
-            const noise = new Float32Array(SEQ_LEN * FEATURES).map(() => (Math.random() - 0.5) * 0.4);
             const z = new Float32Array(loaded.runSync([zeros.buffer as ArrayBuffer])[0]);
-            const n = new Float32Array(loaded.runSync([noise.buffer as ArrayBuffer])[0]);
-            selfTestRef.current = `\nself-test: zeros->${top(z)} | noise->${top(n)}`;
+            // Note: the model has no "no sign" class (zeros -> YES). Empty windows are never sent to it.
+            selfTestRef.current = `\nself-test: zeros->${top(z)} (never used)`;
             console.log('[GRU selftest]', selfTestRef.current);
           } catch (e) {
             console.warn('[GRU selftest] failed', e);
@@ -264,13 +245,13 @@ export function useMotionSignTranslator() {
 
   const isModelReady = modelState === 'loaded' && !!model;
 
-  // ─── Inference on one resampled 30-frame sign ──────────────────────
-  const predict = useCallback((seq: Float32Array[]): Prediction | null => {
+  // ─── Inference on the current 30-sample window ─────────────────────
+  const predict = useCallback((win: Sample[]): Prediction | null => {
     const m = modelRef.current;
-    if (!m || seq.length !== SEQ_LEN) return null;
+    if (!m || win.length !== SEQ_LEN) return null;
 
     const input = new Float32Array(SEQ_LEN * FEATURES);
-    for (let t = 0; t < SEQ_LEN; t++) input.set(seq[t], t * FEATURES);
+    for (let t = 0; t < SEQ_LEN; t++) input.set(win[t].f, t * FEATURES);
 
     const outputs = m.runSync([input.buffer as ArrayBuffer]);
     const scores = new Float32Array(outputs[0]);
@@ -282,10 +263,7 @@ export function useMotionSignTranslator() {
 
     if (DEBUG_GRU) {
       topRef.current = 'top: ' + ranked.slice(0, 3).map(r => `${FSL16_LABELS[r.i]} ${Math.round(r.s * 100)}`).join(' | ');
-      console.log(
-        '[GRU]',
-        ranked.slice(0, 3).map(r => `${FSL16_LABELS[r.i]} ${Math.round(r.s * 100)}`).join(' | '),
-      );
+      console.log('[GRU]', topRef.current);
     }
 
     return {
@@ -296,77 +274,15 @@ export function useMotionSignTranslator() {
     };
   }, []);
 
-  // Clears the in-progress recording (used on stop, camera switch, mirror/rotation change).
+  // Clears the sign in progress (used on start/stop, camera switch, mirror/rotation change).
   const resetRecording = useCallback(() => {
-    recordRef.current = [];
-    wristRef.current = [];
-    prevFrameRef.current = null;
-    prevWristRef.current = null;
-    preRollRef.current = [];
-    stillSinceRef.current = 0;
-    stillCountRef.current = 0;
-    smoothStepRef.current = 0;
-    rearmRef.current = false;
-    calmRef.current = 0;
+    signRef.current = [];
+    missRef.current = 0;
     setProgress(0);
   }, []);
 
-  // The sign is over: resample the recording to 30 frames and classify it once.
-  const finalizeRecording = useCallback(() => {
-    let rec = recordRef.current;
-    let wr = wristRef.current;
-    // Drop the trailing "hand not moving" frames (keep 2) so they don't dilute the sign.
-    const trim = stillCountRef.current - 2;
-    if (trim > 0 && rec.length - trim >= MIN_RECORD_FRAMES) {
-      rec = rec.slice(0, rec.length - trim);
-      wr = wr.slice(0, wr.length - trim);
-    }
-    recordRef.current = [];
-    wristRef.current = [];
-    stillSinceRef.current = 0;
-    stillCountRef.current = 0;
-    smoothStepRef.current = 0;
-    // Don't start a new recording until the hand calms down or leaves the frame,
-    // otherwise a moving hand re-triggers instantly and the UI looks stuck.
-    rearmRef.current = true;
-    calmRef.current = 0;
-    setProgress(0);
-
-    if (rec.length < MIN_RECORD_FRAMES) {
-      setStatus('noHand'); // just a blip
-      return;
-    }
-
-    const seq = resampleTo(rec, SEQ_LEN);
-    const wrists = resampleTo(wr, SEQ_LEN);
-
-    const motion = motionScore(seq, wrists);
-    if (DEBUG_GRU) console.log('[motion]', motion.toFixed(4), 'frames', rec.length);
-    if (motion < MOTION_MIN) {
-      setDetection(null);
-      setStatus('still');
-      return;
-    }
-
-    try {
-      const result = predict(seq);
-      if (DEBUG_GRU && result) {
-        console.log('[sign]', result.label, 'conf', result.confidence.toFixed(2), 'margin', result.margin.toFixed(2), 'frames', rec.length);
-      }
-      if (result && result.confidence >= CONF_THRESHOLD && result.margin >= MIN_MARGIN) {
-        setDetection({ label: result.label, confidence: result.confidence });
-        setStatus('ready');
-      } else {
-        setDetection(null);
-        setStatus('unknown');
-      }
-    } catch (e) {
-      console.warn('[MotionTranslator] inference error:', e);
-    }
-  }, [predict]);
-
   // ─── Called (on the JS thread) with each landmarker result ─────────
-  // Hand appears -> start recording. Hand gone for END_GAP_MS -> classify the recording.
+  // Hand appears -> collect samples (~133 ms apart). Hand gone ~0.4 s (or 30 samples) -> classify once.
   const handleHands = useCallback(
     (hands: number[][] | null) => {
       if (!isDetectingRef.current || !modelRef.current) return;
@@ -377,108 +293,71 @@ export function useMotionSignTranslator() {
       lastSampleRef.current = now;
       const dt = prevSample ? now - prevSample : 0;
 
-      // No hands
-      if (!hands || hands.length === 0) {
-        prevFrameRef.current = null;
-        prevWristRef.current = null;
-        preRollRef.current = [];
-        if (recordRef.current.length > 0) {
-          // Mid-sign dropouts are normal; only finish after a real gap.
-          if (now - lastHandMsRef.current >= END_GAP_MS) finalizeRecording();
-        } else {
-          // Hand left the frame: ready for the next sign.
-          rearmRef.current = false;
-          calmRef.current = 0;
-          // Keep a finished result's status ('ready' / 'unknown' / 'still') on screen.
-          setStatus(prev => (prev === 'collecting' || prev === 'idle' ? 'noHand' : prev));
-        }
-        return;
-      }
-      lastHandMsRef.current = now;
-
+      const has = !!hands && hands.length > 0;
       const mirror =
         mirrorOverrideRef.current ??
         (cameraPositionRef.current === 'front' ? MIRROR_FRONT_CAMERA : MIRROR_BACK_CAMERA);
+      const sign = signRef.current;
 
-      const frame = buildFrame(hands, mirror, rotRef.current);
-      const wrist = [hands[0][0], hands[0][1]];
-
-      // How far the hand moved since the previous frame (same measure as motionScore),
-      // smoothed so single-frame landmark jitter doesn't count as movement.
-      let step = 0;
-      const pf = prevFrameRef.current;
-      const pw = prevWristRef.current;
-      if (pf && pw) {
-        let d = 0;
-        for (let k = 0; k < FEATURES; k++) d += Math.abs(frame[k] - pf[k]);
-        const raw = d / FEATURES + Math.hypot(wrist[0] - pw[0], wrist[1] - pw[1]);
-        smoothStepRef.current = 0.5 * smoothStepRef.current + 0.5 * raw;
-        step = smoothStepRef.current;
-      }
-      prevFrameRef.current = frame;
-      prevWristRef.current = wrist;
-
-      const rec = recordRef.current;
-
-      if (rec.length === 0) {
-        // Idle: only start recording when the hand actually moves. A hand resting in view
-        // does nothing, and the last result stays on screen.
-        const pre = preRollRef.current;
-        pre.push({ f: frame, w: wrist });
-        if (pre.length > PRE_ROLL) pre.shift();
-        if (DEBUG_GRU) {
-          setDebugText(
-            `hands ${hands.length} | ${orientOf(hands[0], rotRef.current)} | dt ${dt}ms | idle step ${step.toFixed(3)} (start>${MOVE_START}, still<${STILL_STEP})${rearmRef.current ? ' | WAIT: calm hand to re-arm' : ''}\n${topRef.current}${selfTestRef.current}`,
-          );
-        }
-        // After a result, wait until the hand is calm before allowing a new sign.
-        if (rearmRef.current) {
-          if (step < STILL_STEP) {
-            calmRef.current += 1;
-            if (calmRef.current >= REARM_CALM_FRAMES) rearmRef.current = false;
-          } else {
-            calmRef.current = 0;
-          }
-          return;
-        }
-        if (step < MOVE_START) return;
-        setDetection(null); // new sign starts: clear the last result
-        for (const p of pre) {
-          rec.push(p.f);
-          wristRef.current.push(p.w);
-        }
-        preRollRef.current = [];
-        stillSinceRef.current = 0;
-        stillCountRef.current = 0;
-      } else {
-        rec.push(frame);
-        wristRef.current.push(wrist);
-        // Pause = sign finished.
-        if (step < STILL_STEP) {
-          if (stillSinceRef.current === 0) stillSinceRef.current = now;
-          stillCountRef.current += 1;
-          if (now - stillSinceRef.current >= STILL_END_MS) {
-            finalizeRecording();
-            return;
-          }
-        } else {
-          stillSinceRef.current = 0;
-          stillCountRef.current = 0;
-        }
+      // Nothing in progress and no hand: idle. Keep a finished result on screen.
+      if (!has && sign.length === 0) {
+        setStatus(statusRef.current === 'collecting' || statusRef.current === 'idle' ? 'noHand' : statusRef.current);
+        return;
       }
 
-      setProgress(Math.min(rec.length, MAX_RECORD_FRAMES));
+      const frame = has ? buildFrame(hands as number[][], mirror, rotRef.current) : new Float32Array(FEATURES);
+
+      if (sign.length === 0) {
+        setDetection(null); // a new sign starts: clear the last result
+      }
+      sign.push({ f: frame, h: has });
+      missRef.current = has ? 0 : missRef.current + 1;
+
+      let handCount = 0;
+      for (let i = 0; i < sign.length; i++) if (sign[i].h) handCount++;
+      setProgress(Math.min(sign.length, SEQ_LEN));
       setStatus('collecting');
 
       if (DEBUG_GRU) {
         setDebugText(
-          `hands ${hands.length} | ${orientOf(hands[0], rotRef.current)} | dt ${dt}ms | rec ${rec.length} step ${step.toFixed(3)} still ${stillCountRef.current}\n${topRef.current}${selfTestRef.current}`,
+          `hands ${has ? hands!.length : 0} | ${has ? orientOf(hands![0], rotRef.current) : '-'} | dt ${dt}ms | sign ${sign.length}/${SEQ_LEN} (hand samples ${handCount}) | mirror ${mirror ? 'ON' : 'OFF'}\n${topRef.current}${selfTestRef.current}`,
         );
       }
 
-      if (rec.length >= MAX_RECORD_FRAMES) finalizeRecording();
+      const ended = !has && missRef.current >= END_GAP_SAMPLES;
+      const full = sign.length >= SEQ_LEN;
+      if (!ended && !full) return;
+
+      // The sign is over: drop the trailing "no hand" samples, centre it in a 30-sample window, classify once.
+      const finished = ended ? sign.slice(0, sign.length - missRef.current) : sign.slice();
+      signRef.current = [];
+      missRef.current = 0;
+      setProgress(0);
+
+      let hc = 0;
+      for (let i = 0; i < finished.length; i++) if (finished[i].h) hc++;
+      if (hc < MIN_HAND_FRAMES) {
+        setStatus('noHand'); // just a blip
+        return;
+      }
+
+      try {
+        const result = predict(centreWindow(finished));
+        if (result && result.confidence >= CONF_THRESHOLD && result.margin >= MIN_MARGIN) {
+          if (DEBUG_GRU) {
+            console.log('[sign]', result.label, 'conf', result.confidence.toFixed(2), 'margin', result.margin.toFixed(2), 'samples', finished.length);
+          }
+          setDetection({ label: result.label, confidence: result.confidence });
+          setStatus('ready');
+        } else {
+          setDetection(null);
+          setStatus('unknown');
+        }
+      } catch (e) {
+        console.warn('[MotionTranslator] inference error:', e);
+      }
     },
-    [finalizeRecording],
+    [predict, setStatus],
   );
 
   const handleHandsJS = useMemo(() => Worklets.createRunOnJS(handleHands), [handleHands]);
@@ -504,7 +383,7 @@ export function useMotionSignTranslator() {
     setDetection(null);
     setStatus(isDetectingRef.current ? 'still' : 'idle');
     setCameraPosition(prev => (prev === 'front' ? 'back' : 'front'));
-  }, [backDevice, frontDevice, resetRecording]);
+  }, [backDevice, frontDevice, resetRecording, setStatus]);
 
   // ─── Voice ─────────────────────────────────────────────────────────
   const [isVoiceEnabled, setIsVoiceEnabled] = useState(true);
@@ -573,14 +452,13 @@ export function useMotionSignTranslator() {
 
     resetRecording();
     lastSampleRef.current = 0;
-    lastHandMsRef.current = 0;
     setDetection(null);
     setStatus(next ? 'still' : 'idle'); // 'still' = "Waiting for a sign…"
     setIsDetecting(next);
     if (!next) Speech.stop();
-  }, [detectingSV, resetRecording]);
+  }, [detectingSV, resetRecording, setStatus]);
 
-  // ─── Mirror toggle (for finding out how the model was trained) ─────
+  // ─── Mirror toggle ─────────────────────────────────────────────────
   const toggleMirror = useCallback(() => {
     const defaultMirror =
       cameraPositionRef.current === 'front' ? MIRROR_FRONT_CAMERA : MIRROR_BACK_CAMERA;
@@ -620,7 +498,7 @@ export function useMotionSignTranslator() {
     detection,
     status,
     progress,
-    seqLen: MAX_RECORD_FRAMES, // progress bar fills toward the recording cap (model input is still SEQ_LEN)
+    seqLen: SEQ_LEN,
     isModelReady,
     modelState,
     pluginAvailable: HAND_PLUGIN_AVAILABLE,
