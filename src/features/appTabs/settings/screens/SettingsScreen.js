@@ -7,12 +7,16 @@ import {
   Alert,
   Switch,
   Animated,
+  Image,
+  ActivityIndicator,
+  StyleSheet,
 } from 'react-native';
 import MaterialCommunityIcons from 'react-native-vector-icons/MaterialCommunityIcons';
 import { useAuth } from '../../../auth/services/AuthContext';
+import useProfilePhoto from '../../../../hooks/useProfilePhoto';
 
 // Import local styling and shared global design tokens
-import { COLOR } from '../../../../styles/colors/theme'; 
+import { COLOR } from '../../../../styles/colors/theme';
 import { styles } from '../../../../styles/colors/SettingsScreenStyle';
 
 // ─── Settings Row ─────────────────────────────────────────────────────────────
@@ -75,6 +79,9 @@ export default function SettingsScreen() {
   // Only accounts created with email + password get the Account section.
   // Google / Facebook users manage these details through their provider.
   const isEmailAccount = !!user?.providerData?.some(p => p.providerId === 'password');
+
+  // Profile photo (saved on this device). Tap the picture or the pencil to change it.
+  const { uri: photoUri, busy: photoBusy, choosePhoto } = useProfilePhoto(user?.uid);
 
   const [notificationsEnabled, setNotificationsEnabled] = React.useState(true);
   const [biometricsEnabled, setBiometricsEnabled] = React.useState(false);
@@ -139,12 +146,26 @@ export default function SettingsScreen() {
       >
         {/* ── Profile Card ──────────────────────────────────────────── */}
         <View style={styles.profileCard}>
-          <View style={styles.avatarRing}>
-            <View style={styles.avatar}>
-              <MaterialCommunityIcons name="account-outline" size={28} color={COLOR.tealBright} />
+          <TouchableOpacity activeOpacity={0.8} onPress={choosePhoto} style={styles.avatarRing}>
+            <View style={[styles.avatar, { overflow: 'hidden' }]}>
+              {photoUri ? (
+                <Image source={{ uri: photoUri }} style={StyleSheet.absoluteFill} resizeMode="cover" />
+              ) : (
+                <MaterialCommunityIcons name="account-outline" size={28} color={COLOR.tealBright} />
+              )}
+              {photoBusy && (
+                <View
+                  style={[
+                    StyleSheet.absoluteFill,
+                    { alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(0,0,0,0.35)' },
+                  ]}
+                >
+                  <ActivityIndicator size="small" color="#fff" />
+                </View>
+              )}
             </View>
             <View style={styles.avatarOnline} />
-          </View>
+          </TouchableOpacity>
 
           <View style={styles.profileInfo}>
             <Text style={styles.profileName}>{user?.displayName || 'Staff Member'}</Text>
@@ -155,7 +176,7 @@ export default function SettingsScreen() {
             </View>
           </View>
 
-          <TouchableOpacity style={styles.editBtn} activeOpacity={0.7}>
+          <TouchableOpacity style={styles.editBtn} activeOpacity={0.7} onPress={choosePhoto}>
             <MaterialCommunityIcons name="pencil-outline" size={16} color={COLOR.inkMuted} />
           </TouchableOpacity>
         </View>
@@ -165,7 +186,7 @@ export default function SettingsScreen() {
           {/* ── Account ───────────────────────────────────────────────── */}
           <SectionHeader title="ACCOUNT" icon="account-circle-outline" />
           <View style={styles.card}>
-            <SettingsRow icon="account-edit-outline" label="Edit Profile" sublabel="Name, photo, specialty" />
+            <SettingsRow icon="account-edit-outline" label="Edit Profile" sublabel="Name, photo, specialty" onPress={choosePhoto} />
             <SettingsRow icon="email-outline" label="Email Address" sublabel={user?.email || '—'} />
             <SettingsRow icon="lock-reset" label="Change Password" sublabel="Last changed 30 days ago" isLast />
           </View>

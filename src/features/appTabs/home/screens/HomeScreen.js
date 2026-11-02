@@ -16,6 +16,8 @@ import { useAuth } from '../../../auth/services/AuthContext';
 import { COLOR } from '../../../../styles/colors/theme';
 import { styles } from '../../../../styles/colors/HomeScreenStyle';
 import SignLanguageImg from '../../../../assets/images/signLanguage.png';
+import useProfilePhoto from '../../../../hooks/useProfilePhoto';
+
 
 // ─── Reusable press-scale wrapper ──────────────────────────────────────────────
 function Pressable({ style, onPress, children }) {
@@ -101,6 +103,8 @@ function HeroCard({
 export default function HomeScreen() {
   const { user } = useAuth();
   const navigation = useNavigation();
+  const { uri: photoUri } = useProfilePhoto(user?.uid);
+
 
   // ── Entrance animations ───────────────────────────────────────────────────
   const headerFade   = useRef(new Animated.Value(0)).current;
@@ -154,8 +158,10 @@ export default function HomeScreen() {
             <Text style={styles.headerGreeting}>Good Morning,</Text>
             <Text style={styles.headerName}>{firstName}</Text>
           </View>
-          <TouchableOpacity style={styles.headerAvatar}>
-            <MaterialCommunityIcons name="account" size={22} color={COLOR.white} />
+          <TouchableOpacity style={[styles.headerAvatar, { overflow: 'hidden' }]}>
+            {photoUri
+              ? <Image source={{ uri: photoUri }} style={StyleSheet.absoluteFill} resizeMode="cover" />
+              : <MaterialCommunityIcons name="account" size={22} color={COLOR.white} />}
           </TouchableOpacity>
         </View>
       </Animated.View>
