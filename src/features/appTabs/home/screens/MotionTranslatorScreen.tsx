@@ -1,0 +1,378 @@
+import React from 'react';
+import {
+  ScrollView,
+  StatusBar,
+  StyleSheet,
+  Text,
+  TouchableOpacity,
+  View,
+  Animated,
+} from 'react-native';
+import { Camera, CameraDevice, CameraDeviceFormat, ReadonlyFrameProcessor } from 'react-native-vision-camera';
+import { useNavigation } from '@react-navigation/native';
+import MaterialCommunityIcons from 'react-native-vector-icons/MaterialCommunityIcons';
+
+import { COLOR } from '../../../../styles/colors/theme';
+import { styles } from '../../../../styles/colors/TranslatorScreenStyle';
+import { useMotionSignTranslator, MotionStatus } from '../../../../hooks/useMotionSignDetector';
+import ModeTabs from './ModeTabs';
+
+const localStyles = StyleSheet.create({
+  headerRightRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  // Left side of the header: shrinks so the badges on the right never get clipped
+  headerLeftRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flex: 1,
+    minWidth: 0,
+    marginRight: 10,
+  },
+  headerTitleWrap: {
+    flex: 1,
+    minWidth: 0,
+  },
+  // Right side of the header: keeps its natural width
+  headerBadgesRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flexShrink: 0,
+  },
+  headerBadgeGap: {
+    marginRight: 6,
+  },
+  backBtn: {
+    width: 36,
+    height: 36,
+    borderRadius: 10,
+    backgroundColor: 'rgba(255,255,255,0.10)',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.18)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 14,
+  },
+  floatingBack: {
+    position: 'absolute',
+    top: 48,
+    left: 20,
+    width: 36,
+    height: 36,
+    borderRadius: 10,
+    backgroundColor: 'rgba(13,61,64,0.10)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  flexFill: {
+    flex: 1,
+  },
+});
+
+type CameraViewProps = {
+  cameraRef: React.RefObject<Camera | null>;
+  device: CameraDevice;
+  format: CameraDeviceFormat | undefined;
+  frameProcessor: ReadonlyFrameProcessor;
+};
+
+const CameraView = React.memo(function CameraView({ cameraRef, device, format, frameProcessor }: CameraViewProps) {
+  return (
+    <View style={styles.viewfinderWrap}>
+      <Camera
+        key={device.id}
+        ref={cameraRef}
+        style={StyleSheet.absoluteFill}
+        device={device}
+        format={format}
+        isActive={true}
+        pixelFormat="rgb"
+        frameProcessor={frameProcessor}
+      />
+      <View style={styles.scanlineOverlay} pointerEvents="none" />
+      <View style={[styles.corner, styles.cornerTL]} pointerEvents="none" />
+      <View style={[styles.corner, styles.cornerTR]} pointerEvents="none" />
+      <View style={[styles.corner, styles.cornerBL]} pointerEvents="none" />
+      <View style={[styles.corner, styles.cornerBR]} pointerEvents="none" />
+    </View>
+  );
+});
+
+type ModelBannerProps = {
+  modelState: string;
+  pluginAvailable: boolean;
+};
+
+const ModelBanner = React.memo(function ModelBanner({ modelState, pluginAvailable }: ModelBannerProps) {
+  const isError = modelState === 'error' || !pluginAvailable;
+  return (
+    <View style={[styles.bannerCard, isError && styles.bannerCardError]}>
+      <View style={[styles.bannerIconWrap, isError && styles.bannerIconWrapError]}>
+        <MaterialCommunityIcons
+          name={isError ? 'alert-circle' : 'circle-slice-2'}
+          size={16}
+          color={isError ? COLOR.red : COLOR.amber}
+        />
+      </View>
+      <Text style={[styles.bannerText, isError && styles.bannerTextError]}>
+        {!pluginAvailable
+          ? 'Hand tracking plugin missing from this build. Rebuild the app.'
+          : isError
+          ? 'Model setup failed'
+          : 'Optimizing translation engine…'}
+      </Text>
+    </View>
+  );
+});
+
+type Detection = {
+  label: string;
+  confidence: number;
+};
+
+type DetectionCardProps = {
+  detection: Detection | null;
+  isDetecting: boolean;
+  status: MotionStatus;
+  progress: number;
+  seqLen: number;
+  cardOpacity: Animated.Value;
+  cardScale: Animated.Value;
+};
+
+const DetectionCard = React.memo(function DetectionCard({
+  detection,
+  isDetecting,
+  status,
+  progress,
+  seqLen,
+  cardOpacity,
+  cardScale,
+}: DetectionCardProps) {
+  if (!detection) {
+    let message = 'Start session to begin translations';
+    if (isDetecting) {
+      if (status === 'noHand') message = 'NO HAND DETECTED';
+      else if (status === 'unknown') message = 'UNKNOWN SIGN';
+      else message = `Capturing motion… ${progress}/${seqLen}`;
+    }
+    return (
+      <View style={styles.outputBox}>
+        <View style={styles.outputIconWrap}>
+          <MaterialCommunityIcons
+            name={status === 'noHand' && isDetecting ? 'hand-back-left-off' : 'text-to-speech'}
+            size={20}
+            color={COLOR.tealDeep}
+          />
+        </View>
+        <Text style={styles.outputTextMuted}>{message}</Text>
+        {isDetecting && status === 'collecting' && (
+          <View style={[styles.confidenceTrack, { marginTop: 12, width: '60%', flex: 0 }]}>
+            <View style={[styles.confidenceFill, { width: `${(progress / seqLen) * 100}%` }]} />
+          </View>
+        )}
+      </View>
+    );
+  }
+
+  return (
+    <Animated.View style={{ opacity: cardOpacity, transform: [{ scale: cardScale }] }}>
+      <Text style={styles.sectionLabel}>DETECTED SIGN</Text>
+      <Text style={styles.predictionLabel}>{detection.label}</Text>
+
+      <View style={styles.predictionMeta}>
+        <Text style={styles.predictionConf}>
+          Confidence: {Math.round(detection.confidence * 100)}%
+        </Text>
+        <View style={styles.confidenceTrack}>
+          <View style={[styles.confidenceFill, { width: `${detection.confidence * 100}%` }]} />
+        </View>
+      </View>
+    </Animated.View>
+  );
+});
+
+export default function MotionTranslatorScreen() {
+  const navigation = useNavigation();
+  const {
+    hasPermission,
+    requestPermission,
+    device,
+    format,
+    cameraPosition,
+    hasBackCamera,
+    toggleCamera,
+    isDetecting,
+    detection,
+    status,
+    progress,
+    seqLen,
+    isModelReady,
+    modelState,
+    pluginAvailable,
+    frameProcessor,
+    cameraRef,
+    cardOpacity,
+    cardScale,
+    toggleDetection,
+    isVoiceEnabled,
+    toggleVoice,
+  } = useMotionSignTranslator();
+
+  if (!hasPermission) {
+    return (
+      <View style={styles.centeredFill}>
+        <View style={styles.emptyIconWrap}>
+          <MaterialCommunityIcons name="camera-off" size={28} color={COLOR.tealBright} />
+        </View>
+        <TouchableOpacity style={localStyles.floatingBack} onPress={() => navigation.goBack()} activeOpacity={0.8}>
+          <MaterialCommunityIcons name="arrow-left" size={18} color={COLOR.tealDeep} />
+        </TouchableOpacity>
+        <Text style={styles.emptyTitle}>Camera Access Needed</Text>
+        <Text style={styles.emptyBody}>
+          Sign detection requires access to your camera to read hand gestures in real time.
+        </Text>
+        <TouchableOpacity style={styles.primaryBtn} onPress={requestPermission}>
+          <Text style={styles.primaryBtnText}>Grant Permission</Text>
+        </TouchableOpacity>
+      </View>
+    );
+  }
+
+  if (!device) {
+    return (
+      <View style={styles.centeredFill}>
+        <View style={styles.emptyIconWrap}>
+          <MaterialCommunityIcons name="camera-off" size={28} color={COLOR.tealBright} />
+        </View>
+        <TouchableOpacity style={localStyles.floatingBack} onPress={() => navigation.goBack()} activeOpacity={0.8}>
+          <MaterialCommunityIcons name="arrow-left" size={18} color={COLOR.tealDeep} />
+        </TouchableOpacity>
+        <Text style={styles.emptyTitle}>No Camera Found</Text>
+        <Text style={styles.emptyBody}>A camera is required for sign detection.</Text>
+      </View>
+    );
+  }
+
+  return (
+    <View style={styles.root}>
+      <StatusBar barStyle="light-content" backgroundColor={COLOR.tealDeep} />
+
+      <View style={styles.bgLayer} pointerEvents="none">
+        <View style={styles.bgBlobTopRight} />
+        <View style={styles.bgBlobMidLeft} />
+      </View>
+
+      <View style={styles.header}>
+        <View style={styles.headerBlob} />
+        <View style={styles.headerTop}>
+          <View style={localStyles.headerLeftRow}>
+            <TouchableOpacity style={localStyles.backBtn} onPress={() => navigation.goBack()} activeOpacity={0.8}>
+              <MaterialCommunityIcons name="arrow-left" size={18} color={COLOR.tealLight} />
+            </TouchableOpacity>
+            <View style={localStyles.headerTitleWrap}>
+              <Text style={styles.headerEyebrow} numberOfLines={1}>MOTION TRANSLATION</Text>
+              <Text style={styles.headerTitle} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.75}>
+                Motion Signs
+              </Text>
+            </View>
+          </View>
+          <View style={localStyles.headerBadgesRow}>
+            {/* Voice mute/unmute toggle */}
+            <TouchableOpacity
+              onPress={toggleVoice}
+              style={[styles.liveBadge, localStyles.headerBadgeGap]}
+              activeOpacity={0.8}
+            >
+              <MaterialCommunityIcons
+                name={isVoiceEnabled ? 'volume-high' : 'volume-off'}
+                size={16}
+                color={isVoiceEnabled ? COLOR.tealBright : COLOR.red}
+              />
+            </TouchableOpacity>
+
+            <View style={[styles.liveBadge, isDetecting && styles.liveBadgeActive]}>
+              <View style={[styles.liveDot, isDetecting && styles.liveDotActive]} />
+              <Text style={[styles.liveText, isDetecting && styles.liveTextActive]}>
+                {isDetecting ? 'LIVE' : 'IDLE'}
+              </Text>
+            </View>
+          </View>
+        </View>
+      </View>
+
+      <ScrollView
+        style={localStyles.flexFill}
+        contentContainerStyle={styles.scrollContent}
+        showsVerticalScrollIndicator={false}
+      >
+        
+      <ModeTabs active="sign" />
+        {(!isModelReady || !pluginAvailable) && (
+          <ModelBanner modelState={modelState} pluginAvailable={pluginAvailable} />
+        )}
+
+        <View style={styles.card}>
+          <View style={styles.cardHeader}>
+            <View style={[styles.cardTitleRow, { flex: 1, marginRight: 10 }]}>
+              <View style={styles.historyIconWrap}>
+                <MaterialCommunityIcons name="camera" size={20} color={COLOR.tealDeep} />
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.cardTitle}>Camera Input</Text>
+                <Text style={styles.cardSub}>
+                  {cameraPosition === 'front'
+                    ? 'Keep hands in frame and sign the full motion'
+                    : 'Back camera: point at the signer, hands in frame'}
+                </Text>
+              </View>
+            </View>
+            {hasBackCamera && (
+              <TouchableOpacity
+                onPress={toggleCamera}
+                style={styles.cardHeaderChip}
+                activeOpacity={0.8}
+              >
+                <MaterialCommunityIcons name="camera-flip" size={14} color={COLOR.tealDeep} />
+                <Text style={styles.cardHeaderChipText}>
+                  {cameraPosition === 'front' ? 'FRONT' : 'BACK'}
+                </Text>
+              </TouchableOpacity>
+            )}
+          </View>
+
+          <CameraView cameraRef={cameraRef} device={device} format={format} frameProcessor={frameProcessor} />
+        </View>
+
+        <View style={styles.card}>
+          <DetectionCard
+            detection={detection}
+            isDetecting={isDetecting}
+            status={status}
+            progress={progress}
+            seqLen={seqLen}
+            cardOpacity={cardOpacity}
+            cardScale={cardScale}
+          />
+        </View>
+
+        <TouchableOpacity
+          style={[styles.primaryBtn, isDetecting && styles.stopBtn]}
+          onPress={toggleDetection}
+          disabled={!isModelReady}
+          activeOpacity={0.88}
+        >
+          <MaterialCommunityIcons
+            name={isDetecting ? 'stop' : 'play'}
+            size={22}
+            color={isDetecting ? COLOR.red : COLOR.tealDeep}
+          />
+          <Text style={[styles.primaryBtnText, isDetecting && styles.stopBtnText]}>
+            {isDetecting ? 'End Translation' : 'Start Translation'}
+          </Text>
+        </TouchableOpacity>
+      </ScrollView>
+    </View>
+  );
+}

@@ -20,6 +20,7 @@ import EmergencyScreen from '../appTabs/emergency/screens/EmergencyScreen';
 import DictionaryScreen from '../appTabs/home/screens/DictionaryScreen';
 import SignDetailScreen from '../appTabs/home/screens/SignDetailScreen';
 import TranslateModeScreen from '../appTabs/home/screens/TranslateModeScreen';
+import MotionTranslatorScreen from '../appTabs/home/screens/MotionTranslatorScreen';
 
 const Stack = createStackNavigator();
 const Tab = createBottomTabNavigator();
@@ -129,6 +130,11 @@ function AppStack() {
         name="TranslateMode"
         component={TranslateModeScreen}
         options={{ headerShown: false, title: 'Translate' }}
+      />
+            <Stack.Screen
+        name="MotionTranslator"
+        component={MotionTranslatorScreen}
+        options={{ headerShown: false, title: 'Motion Translator' }}
       />
     </Stack.Navigator>
   );

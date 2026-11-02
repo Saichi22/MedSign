@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useMemo } from 'react';
 import {
   ScrollView,
   StatusBar,
@@ -8,13 +8,13 @@ import {
   View,
   Animated,
 } from 'react-native';
-import { Camera, CameraDevice, CameraDeviceFormat, ReadonlyFrameProcessor } from 'react-native-vision-camera';
+import { Camera, CameraDevice, CameraDeviceFormat } from 'react-native-vision-camera';
 import { useNavigation } from '@react-navigation/native';
 import MaterialCommunityIcons from 'react-native-vector-icons/MaterialCommunityIcons';
 
 import { COLOR } from '../../../../styles/colors/theme';
 import { styles } from '../../../../styles/colors/TranslatorScreenStyle';
-import { useMotionSignTranslator, MotionStatus } from '../../../../hooks/useMotionSignDetector';
+import { useSignTranslator, isMedicalLabel } from '../../../../hooks/useSignDetector';
 import ModeTabs from './ModeTabs';
 
 const localStyles = StyleSheet.create({
@@ -68,16 +68,28 @@ const localStyles = StyleSheet.create({
   flexFill: {
     flex: 1,
   },
+  suggestionRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    marginTop: 8,
+  },
+  suggestionChip: {
+    paddingHorizontal: 12,
+    marginRight: 8,
+    marginBottom: 8,
+  },
+  suggestionChipFallback: {
+    opacity: 0.7,
+  },
 });
 
 type CameraViewProps = {
   cameraRef: React.RefObject<Camera | null>;
   device: CameraDevice;
   format: CameraDeviceFormat | undefined;
-  frameProcessor: ReadonlyFrameProcessor;
 };
 
-const CameraView = React.memo(function CameraView({ cameraRef, device, format, frameProcessor }: CameraViewProps) {
+const CameraView = React.memo(function CameraView({ cameraRef, device, format }: CameraViewProps) {
   return (
     <View style={styles.viewfinderWrap}>
       <Camera
@@ -87,8 +99,8 @@ const CameraView = React.memo(function CameraView({ cameraRef, device, format, f
         device={device}
         format={format}
         isActive={true}
-        pixelFormat="rgb"
-        frameProcessor={frameProcessor}
+        photo={true}
+        pixelFormat="yuv"
       />
       <View style={styles.scanlineOverlay} pointerEvents="none" />
       <View style={[styles.corner, styles.cornerTL]} pointerEvents="none" />
@@ -101,11 +113,10 @@ const CameraView = React.memo(function CameraView({ cameraRef, device, format, f
 
 type ModelBannerProps = {
   modelState: string;
-  pluginAvailable: boolean;
 };
 
-const ModelBanner = React.memo(function ModelBanner({ modelState, pluginAvailable }: ModelBannerProps) {
-  const isError = modelState === 'error' || !pluginAvailable;
+const ModelBanner = React.memo(function ModelBanner({ modelState }: ModelBannerProps) {
+  const isError = modelState === 'error';
   return (
     <View style={[styles.bannerCard, isError && styles.bannerCardError]}>
       <View style={[styles.bannerIconWrap, isError && styles.bannerIconWrapError]}>
@@ -116,11 +127,7 @@ const ModelBanner = React.memo(function ModelBanner({ modelState, pluginAvailabl
         />
       </View>
       <Text style={[styles.bannerText, isError && styles.bannerTextError]}>
-        {!pluginAvailable
-          ? 'Hand tracking plugin missing from this build. Rebuild the app.'
-          : isError
-          ? 'Model setup failed'
-          : 'Optimizing translation engine…'}
+        {isError ? 'Model setup failed' : 'Optimizing translation engine…'}
       </Text>
     </View>
   );
@@ -134,9 +141,7 @@ type Detection = {
 type DetectionCardProps = {
   detection: Detection | null;
   isDetecting: boolean;
-  status: MotionStatus;
-  progress: number;
-  seqLen: number;
+  isMedicalSign: boolean;
   cardOpacity: Animated.Value;
   cardScale: Animated.Value;
 };
@@ -144,34 +149,19 @@ type DetectionCardProps = {
 const DetectionCard = React.memo(function DetectionCard({
   detection,
   isDetecting,
-  status,
-  progress,
-  seqLen,
+  isMedicalSign,
   cardOpacity,
   cardScale,
 }: DetectionCardProps) {
   if (!detection) {
-    let message = 'Start session to begin translations';
-    if (isDetecting) {
-      if (status === 'noHand') message = 'NO HAND DETECTED';
-      else if (status === 'unknown') message = 'UNKNOWN SIGN';
-      else message = `Capturing motion… ${progress}/${seqLen}`;
-    }
     return (
       <View style={styles.outputBox}>
         <View style={styles.outputIconWrap}>
-          <MaterialCommunityIcons
-            name={status === 'noHand' && isDetecting ? 'hand-back-left-off' : 'text-to-speech'}
-            size={20}
-            color={COLOR.tealDeep}
-          />
+          <MaterialCommunityIcons name="text-to-speech" size={20} color={COLOR.tealDeep} />
         </View>
-        <Text style={styles.outputTextMuted}>{message}</Text>
-        {isDetecting && status === 'collecting' && (
-          <View style={[styles.confidenceTrack, { marginTop: 12, width: '60%', flex: 0 }]}>
-            <View style={[styles.confidenceFill, { width: `${(progress / seqLen) * 100}%` }]} />
-          </View>
-        )}
+        <Text style={styles.outputTextMuted}>
+          {isDetecting ? 'Awaiting sign inputs…' : 'Start session to begin translations'}
+        </Text>
       </View>
     );
   }
@@ -180,6 +170,13 @@ const DetectionCard = React.memo(function DetectionCard({
     <Animated.View style={{ opacity: cardOpacity, transform: [{ scale: cardScale }] }}>
       <Text style={styles.sectionLabel}>DETECTED SIGN</Text>
       <Text style={styles.predictionLabel}>{detection.label}</Text>
+
+      {isMedicalSign && (
+        <View style={styles.medicalTag}>
+          <MaterialCommunityIcons name="heart-pulse" size={12} color={COLOR.amber} />
+          <Text style={styles.medicalTagText}>Medical Terminology</Text>
+        </View>
+      )}
 
       <View style={styles.predictionMeta}>
         <Text style={styles.predictionConf}>
@@ -190,6 +187,43 @@ const DetectionCard = React.memo(function DetectionCard({
         </View>
       </View>
     </Animated.View>
+  );
+});
+
+type SpellSuggestionsProps = {
+  suggestions: string[];
+  pendingWord: string;
+  onSelect: (word: string) => void;
+};
+
+const SpellSuggestions = React.memo(function SpellSuggestions({
+  suggestions,
+  pendingWord,
+  onSelect,
+}: SpellSuggestionsProps) {
+  return (
+    <View style={styles.outputBox}>
+      <Text style={styles.outputTextMuted}>Did you mean:</Text>
+      <View style={localStyles.suggestionRow}>
+        {suggestions.map(word => (
+<TouchableOpacity
+  key={word}
+  onPress={() => onSelect(word)}
+  style={{ backgroundColor: '#2a9d8f', paddingHorizontal: 12, paddingVertical: 6, borderRadius: 8, marginRight: 8, marginBottom: 8 }}
+  activeOpacity={0.8}
+>
+  <Text style={{ color: '#ffffff', fontWeight: '600' }}>{word}</Text>
+</TouchableOpacity>
+        ))}
+        <TouchableOpacity
+          onPress={() => onSelect(pendingWord)}
+          style={[styles.liveBadge, localStyles.suggestionChip, localStyles.suggestionChipFallback]}
+          activeOpacity={0.8}
+        >
+          <Text style={styles.liveText}>{pendingWord} (as spelled)</Text>
+        </TouchableOpacity>
+      </View>
+    </View>
   );
 });
 
@@ -205,20 +239,27 @@ export default function SignTranslatorScreen() {
     toggleCamera,
     isDetecting,
     detection,
-    status,
-    progress,
-    seqLen,
     isModelReady,
     modelState,
-    pluginAvailable,
-    frameProcessor,
     cameraRef,
     cardOpacity,
     cardScale,
     toggleDetection,
     isVoiceEnabled,
     toggleVoice,
-  } = useMotionSignTranslator();
+    isSpelling,
+    spellBuffer,
+    spellLanguage,
+    toggleSpellLanguage,
+    spellSuggestions,
+    spellPendingWord,
+    resolveSpellSuggestion,
+  } = useSignTranslator();
+
+  const isMedicalSign = useMemo(
+    () => !!detection && isMedicalLabel(detection.label),
+    [detection?.label],
+  );
 
   if (!hasPermission) {
     return (
@@ -279,6 +320,17 @@ export default function SignTranslatorScreen() {
             </View>
           </View>
           <View style={localStyles.headerBadgesRow}>
+            {/* Spelling-language toggle (EN / FIL) */}
+            <TouchableOpacity
+              onPress={toggleSpellLanguage}
+              style={[styles.liveBadge, localStyles.headerBadgeGap]}
+              activeOpacity={0.8}
+            >
+              <Text style={[styles.liveText, { color: COLOR.tealBright }]}>
+                {spellLanguage === 'en' ? 'EN' : 'FIL'}
+              </Text>
+            </TouchableOpacity>
+
             {/* Voice mute/unmute toggle */}
             <TouchableOpacity
               onPress={toggleVoice}
@@ -309,11 +361,9 @@ export default function SignTranslatorScreen() {
       >
         
       <ModeTabs active="sign" />
-        {(!isModelReady || !pluginAvailable) && (
-          <ModelBanner modelState={modelState} pluginAvailable={pluginAvailable} />
-        )}
+        {!isModelReady && <ModelBanner modelState={modelState} />}
 
-        <View style={styles.card}>
+        <View style={[styles.card, isMedicalSign && styles.cardMedical]}>
           <View style={styles.cardHeader}>
             <View style={[styles.cardTitleRow, { flex: 1, marginRight: 10 }]}>
               <View style={styles.historyIconWrap}>
@@ -323,8 +373,8 @@ export default function SignTranslatorScreen() {
                 <Text style={styles.cardTitle}>Camera Input</Text>
                 <Text style={styles.cardSub}>
                   {cameraPosition === 'front'
-                    ? 'Keep hands in frame and sign the full motion'
-                    : 'Back camera: point at the signer, hands in frame'}
+                    ? 'Keep hands clearly within the boundaries'
+                    : 'Back camera: point at the signer, hands within the boundaries'}
                 </Text>
               </View>
             </View>
@@ -342,16 +392,31 @@ export default function SignTranslatorScreen() {
             )}
           </View>
 
-          <CameraView cameraRef={cameraRef} device={device} format={format} frameProcessor={frameProcessor} />
+          <CameraView cameraRef={cameraRef} device={device} format={format} />
         </View>
 
         <View style={styles.card}>
+          {isSpelling && (
+            <View style={styles.outputBox}>
+              <Text style={styles.outputTextMuted}>
+                Spelling ({spellLanguage === 'en' ? 'English' : 'Filipino'}): {spellBuffer}
+                <Text style={{ opacity: 0.5 }}>_</Text>
+              </Text>
+            </View>
+          )}
+
+          {spellSuggestions && spellPendingWord && (
+  <SpellSuggestions
+    suggestions={spellSuggestions}
+    pendingWord={spellPendingWord}
+    onSelect={resolveSpellSuggestion}
+  />
+)}
+
           <DetectionCard
             detection={detection}
             isDetecting={isDetecting}
-            status={status}
-            progress={progress}
-            seqLen={seqLen}
+            isMedicalSign={isMedicalSign}
             cardOpacity={cardOpacity}
             cardScale={cardScale}
           />

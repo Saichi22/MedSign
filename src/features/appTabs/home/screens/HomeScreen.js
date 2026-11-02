@@ -166,6 +166,7 @@ export default function HomeScreen() {
         showsVerticalScrollIndicator={false}
       >
         {/* ── Emergency + Translator ───────────────────────────────────── */}
+        {/* ── Emergency + Translator ───────────────────────────────────── */}
         <Animated.View style={{ opacity: cardFade, transform: [{ scale: cardScale }], marginBottom: 26 }}>
           <Text style={styles.sectionLabel}>Sign Language Translator</Text>
           <HeroCard
@@ -178,6 +179,20 @@ export default function HomeScreen() {
             ctaIcon="camera"
             ctaText="Start Translation"
           />
+
+          <View style={styles.heroGap}>
+            <HeroCard
+              onPress={() => navigation.navigate('MotionTranslator')}
+              icon="motion-play-outline"
+              watermark="motion-play-outline"
+              badge="MOTION"
+              title="MedSign Motion Translator"
+              sub="Recognizes full signs in motion, like greetings, days and family"
+              ctaIcon="camera"
+              ctaText="Start Motion Translation"
+              glow="rgba(167,139,250,0.22)"
+            />
+          </View>
         </Animated.View>
 
         {/* ── Learn + Dictionary ───────────────────────────────────────── */}
