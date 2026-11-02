@@ -167,9 +167,10 @@ export default function HomeScreen() {
       >
         {/* ── Emergency + Translator ───────────────────────────────────── */}
         <Animated.View style={{ opacity: cardFade, transform: [{ scale: cardScale }], marginBottom: 26 }}>
+          <Text style={styles.sectionLabel}>Sign Language Translator</Text>
           <HeroCard
             onPress={() => navigation.navigate('TranslateMode')}
-            image={SignLanguageImg}
+            icon="hand-wave"
             watermark="pulse"
             badge="AI-POWERED"
             title="MedSign Translator"

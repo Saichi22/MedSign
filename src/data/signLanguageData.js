@@ -5,6 +5,7 @@
 //   id, fsl, english, tagalog, category
 //   description : one or two plain sentences shown on the sign detail screen
 //   related     : ids of related signs (shown as tappable chips)
+import {SIGN_LANGUAGE_IMAGES} from './signLanguageImages';
 
 const BASE_PHRASES = [
   // Pain & Discomfort
@@ -128,6 +129,7 @@ const LETTER_PHRASES = ALPHABET.map((ch, i) => ({
   english: `Letter ${ch}`,
   tagalog: `Letra ${ch}`,
   category: alphaGroup(ch),
+  image: SIGN_LANGUAGE_IMAGES?.[ch] ?? null,
   description: `The fingerspelled letter ${ch}. Spell names and words that have no sign of their own.`,
   related: [i - 1, i + 1].filter((n) => n >= 0 && n < 26).map(letterId),
 }));

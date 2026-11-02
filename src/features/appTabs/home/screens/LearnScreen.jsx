@@ -6,7 +6,7 @@ import MaterialCommunityIcons from 'react-native-vector-icons/MaterialCommunityI
 
 import { COLOR } from '../../../../styles/colors/theme';
 import { learnStyles as styles } from '../../../../styles/colors/LearnStyle';
-import { PHRASES, LESSON_GROUPS, phrasesForGroup } from '../../../../data/phrasebookData';
+import { PHRASES, LESSON_GROUPS, phrasesForGroup } from '../../../../data/signLanguageData';
 import { getBestScores, formatScoreDate } from '../../../../utils/lessonScores';
 
 const PREVIEW_COUNT = 3;

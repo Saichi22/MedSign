@@ -19,7 +19,7 @@ import { useNavigation, useRoute, StackActions } from '@react-navigation/native'
 import MaterialCommunityIcons from 'react-native-vector-icons/MaterialCommunityIcons';
 
 import { COLOR, FONT, RADIUS, WINDOW_WIDTH as W } from '../../../../styles/colors/theme';
-import { LESSON_GROUPS, PHRASES, phraseById, relatedPhrases, detectorLabelFor } from '../../../../data/phrasebookData';
+import { LESSON_GROUPS, PHRASES, phraseById, relatedPhrases, detectorLabelFor } from '../../../../data/signLanguageData';
 import { SIGN_MEDIA } from '../../../../data/signMedia';
 
 export default function SignDetailScreen() {
@@ -28,7 +28,7 @@ export default function SignDetailScreen() {
 
   const phrase = phraseById(id);
   const group = phrase ? LESSON_GROUPS.find((g) => g.key === phrase.category) : null;
-  const media = phrase ? SIGN_MEDIA[phrase.id] : null;
+  const media = phrase ? (phrase.image || SIGN_MEDIA?.[phrase.id] || null) : null;
   const related = relatedPhrases(phrase);
   const tint = group?.tint;
   const accent = tint?.icon || COLOR.tealBright;
@@ -142,12 +142,7 @@ export default function SignDetailScreen() {
                 </>
               )}
 
-              {camera && (
-                <View style={s.stageBadge} pointerEvents="none">
-                  <MaterialCommunityIcons name="camera-outline" size={12} color={COLOR.tealLight} />
-                  <Text style={s.stageBadgeText}>CAMERA READY</Text>
-                </View>
-              )}
+             
 
               <View style={[s.corner, s.cornerTL]} pointerEvents="none" />
               <View style={[s.corner, s.cornerTR]} pointerEvents="none" />
@@ -277,7 +272,7 @@ export default function SignDetailScreen() {
 }
 
 const s = StyleSheet.create({
-  root: { flex: 1, backgroundColor: COLOR.bgPage },
+  root: { flex: 1, backgroundColor: COLOR.bgPage, paddingBottom: 20 },
   centered: { alignItems: 'center', justifyContent: 'center', padding: 32, gap: 10 },
 
   // ── Header ──────────────────────────────────────────────────────────────────

@@ -12,13 +12,14 @@ import {
   SectionList,
   StatusBar,
   StyleSheet,
+  Image,
   Platform,
 } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import MaterialCommunityIcons from 'react-native-vector-icons/MaterialCommunityIcons';
 
 import { COLOR, FONT, RADIUS, WINDOW_WIDTH as W } from '../../../../styles/colors/theme';
-import { PHRASES, LESSON_GROUPS } from '../../../../data/phrasebookData';
+import { PHRASES, LESSON_GROUPS } from '../../../../data/signLanguageData';
 
 const GROUP_BY_KEY = Object.fromEntries(LESSON_GROUPS.map((g) => [g.key, g]));
 const firstLetter = (str) => (str?.trim()?.[0] || '#').toUpperCase();
@@ -268,7 +269,7 @@ export default function DictionaryScreen() {
 }
 
 const s = StyleSheet.create({
-  root: { flex: 1, backgroundColor: COLOR.bgPage },
+  root: { flex: 1, backgroundColor: COLOR.bgPage, paddingBottom: 20 },
 
   // ── Header ──────────────────────────────────────────────────────────────────
   header: {

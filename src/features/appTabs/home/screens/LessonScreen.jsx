@@ -11,7 +11,7 @@ import MaterialCommunityIcons from 'react-native-vector-icons/MaterialCommunityI
 
 import { COLOR, FONT, RADIUS } from '../../../../styles/colors/theme';
 import { learnStyles as styles } from '../../../../styles/colors/LearnStyle';
-import { PHRASES, LESSON_GROUPS, phrasesForGroup, detectorLabelFor } from '../../../../data/phrasebookData';
+import { PHRASES, LESSON_GROUPS, phrasesForGroup, detectorLabelFor } from '../../../../data/signLanguageData';
 import { SIGN_MEDIA } from '../../../../data/signMedia';
 import { useSignPractice } from '../../../../hooks/useSignDetector';
 import { saveBestScore } from '../../../../utils/lessonScores';

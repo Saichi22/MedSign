@@ -7,6 +7,7 @@ export const styles = StyleSheet.create({
   root: {
     flex: 1,
     backgroundColor: COLOR.bgPage,
+    paddingBottom: 20,
   },
 
   // ── Decorative page background (layered soft blobs, sits behind ScrollView) ─

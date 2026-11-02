@@ -16,7 +16,7 @@ import TranslatorScreen from '../appTabs/home/screens/TranslatorScreen';
 import SpeechToSignScreen from '../appTabs/home/screens/SpeechToSignScreen';
 import LearnScreen from '../appTabs/home/screens/LearnScreen';
 import LessonScreen from '../appTabs/home/screens/LessonScreen';
-import EmergencyScreen from '../appTabs/home/screens/EmergencyScreen';
+import EmergencyScreen from '../appTabs/emergency/screens/EmergencyScreen';
 import DictionaryScreen from '../appTabs/home/screens/DictionaryScreen';
 import SignDetailScreen from '../appTabs/home/screens/SignDetailScreen';
 import TranslateModeScreen from '../appTabs/home/screens/TranslateModeScreen';
