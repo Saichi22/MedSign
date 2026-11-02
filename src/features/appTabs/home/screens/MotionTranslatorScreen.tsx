@@ -155,6 +155,7 @@ const DetectionCard = React.memo(function DetectionCard({
     if (isDetecting) {
       if (status === 'noHand') message = 'NO HAND DETECTED';
       else if (status === 'unknown') message = 'UNKNOWN SIGN';
+            else if (status === 'still') message = 'Waiting for a sign…';
       else message = `Capturing motion… ${progress}/${seqLen}`;
     }
     return (
@@ -218,6 +219,11 @@ export default function MotionTranslatorScreen() {
     toggleDetection,
     isVoiceEnabled,
     toggleVoice,
+    isMirrored,
+    toggleMirror,
+    rotDeg,
+    toggleRotation,
+    debugText,
   } = useMotionSignTranslator();
 
   if (!hasPermission) {
@@ -279,6 +285,29 @@ export default function MotionTranslatorScreen() {
             </View>
           </View>
           <View style={localStyles.headerBadgesRow}>
+            {/* Mirror toggle (flip landmarks horizontally before the model) */}
+            <TouchableOpacity
+              onPress={toggleMirror}
+              style={[styles.liveBadge, localStyles.headerBadgeGap]}
+              activeOpacity={0.8}
+            >
+              <MaterialCommunityIcons
+                name="flip-horizontal"
+                size={16}
+                color={isMirrored ? COLOR.tealBright : 'rgba(255,255,255,0.45)'}
+              />
+            </TouchableOpacity>
+
+            {/* Rotation fix (cycles 0/90/180/270 on the landmarks) */}
+            <TouchableOpacity
+              onPress={toggleRotation}
+              style={[styles.liveBadge, localStyles.headerBadgeGap]}
+              activeOpacity={0.8}
+            >
+              <MaterialCommunityIcons name="rotate-right" size={16} color={COLOR.tealBright} />
+              <Text style={[styles.liveText, { color: COLOR.tealBright }]}>{rotDeg}</Text>
+            </TouchableOpacity>
+
             {/* Voice mute/unmute toggle */}
             <TouchableOpacity
               onPress={toggleVoice}
@@ -309,6 +338,9 @@ export default function MotionTranslatorScreen() {
       >
         
       <ModeTabs active="sign" />
+        {!!debugText && (
+          <Text style={{ fontSize: 11, color: COLOR.inkMuted, fontFamily: 'monospace' }}>{debugText}</Text>
+        )}
         {(!isModelReady || !pluginAvailable) && (
           <ModelBanner modelState={modelState} pluginAvailable={pluginAvailable} />
         )}
