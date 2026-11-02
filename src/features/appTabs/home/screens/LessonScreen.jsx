@@ -187,7 +187,7 @@ function PracticeCamera({ practice, active }) {
         format={format}
         isActive={active}
         photo={true}
-        pixelFormat="yuv"
+        pixelFormat="rgb"
       />
       <View style={[styles.corner, styles.cornerTL]} pointerEvents="none" />
       <View style={[styles.corner, styles.cornerTR]} pointerEvents="none" />

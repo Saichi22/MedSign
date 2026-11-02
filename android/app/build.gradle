@@ -18,6 +18,7 @@ android {
     ndkVersion rootProject.ext.ndkVersion
     buildToolsVersion rootProject.ext.buildToolsVersion
     compileSdk rootProject.ext.compileSdkVersion
+    androidResources { noCompress 'tflite', 'task' }
 
     namespace "com.prt"
     defaultConfig {
@@ -62,6 +63,7 @@ android {
 
 dependencies {
     implementation("com.facebook.react:react-android")
+    implementation 'com.google.mediapipe:tasks-vision:0.10.14'
     implementation(platform("com.google.firebase:firebase-bom:34.9.0"))
     implementation("com.google.firebase:firebase-analytics")
     if (hermesEnabled.toBoolean()) {
