@@ -68,6 +68,12 @@ const localStyles = StyleSheet.create({
   flexFill: {
     flex: 1,
   },
+  guessLine: {
+    marginTop: 6,
+    fontSize: 12,
+    textAlign: 'center',
+    color: COLOR.inkMuted,
+  },
 });
 
 type CameraViewProps = {
@@ -117,7 +123,7 @@ const ModelBanner = React.memo(function ModelBanner({ modelState, pluginAvailabl
       </View>
       <Text style={[styles.bannerText, isError && styles.bannerTextError]}>
         {!pluginAvailable
-          ? 'Hand tracking plugin missing from this build. Rebuild the app.'
+          ? 'Pose + hand tracking plugin missing from this build. Rebuild the app.'
           : isError
           ? 'Model setup failed'
           : 'Optimizing translation engine…'}
@@ -135,8 +141,9 @@ type DetectionCardProps = {
   detection: Detection | null;
   isDetecting: boolean;
   status: MotionStatus;
-  progress: number;
-  seqLen: number;
+  recordingMs: number;
+  maxRecordingMs: number;
+  topGuesses: { label: string; p: number }[];
   cardOpacity: Animated.Value;
   cardScale: Animated.Value;
 };
@@ -145,33 +152,43 @@ const DetectionCard = React.memo(function DetectionCard({
   detection,
   isDetecting,
   status,
-  progress,
-  seqLen,
+  recordingMs,
+  maxRecordingMs,
+  topGuesses,
   cardOpacity,
   cardScale,
 }: DetectionCardProps) {
   if (!detection) {
     let message = 'Start session to begin translations';
     if (isDetecting) {
-      if (status === 'noHand') message = 'NO HAND DETECTED';
-      else if (status === 'unknown') message = 'UNKNOWN SIGN';
-            else if (status === 'still') message = 'Waiting for a sign…';
-      else message = `Capturing motion… ${progress}/${seqLen}`;
+      if (status === 'recording') message = `Recording sign… ${(recordingMs / 1000).toFixed(1)}s`;
+      else if (status === 'unsure') message = 'UNSURE – please sign again';
+      else message = 'Hands down, then sign, then drop your hands';
     }
     return (
       <View style={styles.outputBox}>
         <View style={styles.outputIconWrap}>
           <MaterialCommunityIcons
-            name={status === 'noHand' && isDetecting ? 'hand-back-left-off' : 'text-to-speech'}
+            name={status === 'recording' && isDetecting ? 'hand-wave' : 'text-to-speech'}
             size={20}
             color={COLOR.tealDeep}
           />
         </View>
         <Text style={styles.outputTextMuted}>{message}</Text>
-        {isDetecting && status === 'collecting' && (
+        {isDetecting && status === 'recording' && (
           <View style={[styles.confidenceTrack, { marginTop: 12, width: '60%', flex: 0 }]}>
-            <View style={[styles.confidenceFill, { width: `${(progress / seqLen) * 100}%` }]} />
+            <View
+              style={[
+                styles.confidenceFill,
+                { width: `${Math.min(100, (recordingMs / maxRecordingMs) * 100)}%` },
+              ]}
+            />
           </View>
+        )}
+        {isDetecting && status === 'unsure' && topGuesses.length > 0 && (
+          <Text style={localStyles.guessLine}>
+            Closest: {topGuesses.map(g => `${g.label} ${Math.round(g.p * 100)}%`).join(' · ')}
+          </Text>
         )}
       </View>
     );
@@ -206,9 +223,10 @@ export default function MotionTranslatorScreen() {
     toggleCamera,
     isDetecting,
     detection,
+    topGuesses,
     status,
-    progress,
-    seqLen,
+    recordingMs,
+    maxRecordingMs,
     isModelReady,
     modelState,
     pluginAvailable,
@@ -219,9 +237,7 @@ export default function MotionTranslatorScreen() {
     toggleDetection,
     isVoiceEnabled,
     toggleVoice,
-    isMirrored,
-    toggleMirror,
-    rotDeg,
+    rotation,
     toggleRotation,
     debugText,
   } = useMotionSignTranslator();
@@ -285,27 +301,17 @@ export default function MotionTranslatorScreen() {
             </View>
           </View>
           <View style={localStyles.headerBadgesRow}>
-            {/* Mirror toggle (flip landmarks horizontally before the model) */}
-            <TouchableOpacity
-              onPress={toggleMirror}
-              style={[styles.liveBadge, localStyles.headerBadgeGap]}
-              activeOpacity={0.8}
-            >
-              <MaterialCommunityIcons
-                name="flip-horizontal"
-                size={16}
-                color={isMirrored ? COLOR.tealBright : 'rgba(255,255,255,0.45)'}
-              />
-            </TouchableOpacity>
-
-            {/* Rotation fix (cycles 0/90/180/270 on the landmarks) */}
+            {/* Camera image rotation (AUTO = camera's own orientation). Debug aid only:
+                the analysis image must be upright and is never mirrored. */}
             <TouchableOpacity
               onPress={toggleRotation}
               style={[styles.liveBadge, localStyles.headerBadgeGap]}
               activeOpacity={0.8}
             >
               <MaterialCommunityIcons name="rotate-right" size={16} color={COLOR.tealBright} />
-              <Text style={[styles.liveText, { color: COLOR.tealBright }]}>{rotDeg}</Text>
+              <Text style={[styles.liveText, { color: COLOR.tealBright }]}>
+                {rotation === 'auto' ? 'AUTO' : rotation}
+              </Text>
             </TouchableOpacity>
 
             {/* Voice mute/unmute toggle */}
@@ -324,7 +330,7 @@ export default function MotionTranslatorScreen() {
             <View style={[styles.liveBadge, isDetecting && styles.liveBadgeActive]}>
               <View style={[styles.liveDot, isDetecting && styles.liveDotActive]} />
               <Text style={[styles.liveText, isDetecting && styles.liveTextActive]}>
-                {isDetecting ? 'LIVE' : 'IDLE'}
+                {isDetecting ? (status === 'recording' ? 'REC' : 'LIVE') : 'IDLE'}
               </Text>
             </View>
           </View>
@@ -336,7 +342,7 @@ export default function MotionTranslatorScreen() {
         contentContainerStyle={styles.scrollContent}
         showsVerticalScrollIndicator={false}
       >
-        
+
       <ModeTabs active="sign" />
         {!!debugText && (
           <Text style={{ fontSize: 11, color: COLOR.inkMuted, fontFamily: 'monospace' }}>{debugText}</Text>
@@ -355,8 +361,8 @@ export default function MotionTranslatorScreen() {
                 <Text style={styles.cardTitle}>Camera Input</Text>
                 <Text style={styles.cardSub}>
                   {cameraPosition === 'front'
-                    ? 'Keep hands in frame and sign the full motion'
-                    : 'Back camera: point at the signer, hands in frame'}
+                    ? 'Hands down, sign, then drop your hands. Keep head and both shoulders in view.'
+                    : 'Back camera: point at the signer, head and both shoulders in view'}
                 </Text>
               </View>
             </View>
@@ -382,8 +388,9 @@ export default function MotionTranslatorScreen() {
             detection={detection}
             isDetecting={isDetecting}
             status={status}
-            progress={progress}
-            seqLen={seqLen}
+            recordingMs={recordingMs}
+            maxRecordingMs={maxRecordingMs}
+            topGuesses={topGuesses}
             cardOpacity={cardOpacity}
             cardScale={cardScale}
           />

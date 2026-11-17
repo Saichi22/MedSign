@@ -1,14 +1,16 @@
 // hooks/useMotionSignDetector.ts
-// Sign detection with the FSL16 GRU, following the model README (FSL16 GRU - Android Integration Spec):
-//   MediaPipe hand landmarks (native plugin) -> wrist-relative per hand (slot = detection order,
-//   missing hand = zeros) -> samples taken every ~133 ms -> when the hand leaves, the finished sign is
-//   placed in the MIDDLE of a 30-sample (~4 s) window padded with zeros -> [1,30,126] -> [1,16] softmax.
+// Sign detection with the FSL16 TCN (spec v2.0, "FSL16 TCN - Android Integration Specification").
 //
-// Verified offline on 10 labelled clips with the SAME .tflite: this method (mirror OFF) got 9/10 right
-// (47/50 across start offsets). The old "record the sign, stretch it to 30 frames, mirror ON" method got 4/10.
-// The sign is NOT stretched to fill 30 frames: it sits inside a 4 s window and the rest is zeros.
-// Classifying only after the hand leaves matters: the first half of MOTHER looks like KNOW, so answering
-// while the sign is still in progress gave KNOW for MOTHER. Live simulation: 37/40 this way vs 30/40.
+//   camera frame (upright, NOT mirrored)
+//     -> native plugin `detectLandmarks`: MediaPipe Pose + Hand landmarks of the same frame
+//     -> resultsToFrame: [59 x 3] array (pose 0-16, signer-LEFT hand, signer-RIGHT hand), NaN = missing
+//     -> SignSegmenter: starts when a hand rises, ends ~0.45 s after the hands drop
+//     -> preprocess: fill gaps, trim, resample to 40 frames, 272 body-relative features
+//     -> fsl16_tcn_model.tflite  [1,40,272] -> [1,N] softmax
+//     -> decision rule: p1 >= 0.55 and (p1 - p2) >= 0.15, otherwise UNSURE; OTHER is never shown
+//
+// All the maths lives in utils/fslPreprocess.ts (pure TS, verified against fsl16_test_vectors.json).
+// The model contains its own standardisation layer: features go in raw.
 import { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import { Animated, Easing, LayoutAnimation, Platform, UIManager } from 'react-native';
 import {
@@ -24,119 +26,83 @@ import { Worklets, useSharedValue } from 'react-native-worklets-core';
 import { loadTensorflowModel, TensorflowModel } from 'react-native-fast-tflite';
 import RNFS from 'react-native-fs';
 import Speech from '@mhpdev/react-native-speech';
+import {
+  decide,
+  FEATURE_DIM,
+  L_OFF,
+  LandmarkResult,
+  preprocess,
+  R_OFF,
+  resultsToFrame,
+  SignSegmenter,
+  T_FRAMES,
+} from '../utils/fslPreprocess';
 
 if (Platform.OS === 'android') {
   UIManager.setLayoutAnimationEnabledExperimental?.(true);
 }
 
-// ─── Labels: order MUST match the model output (see FSL16_labels.txt) ────────
-export const FSL16_LABELS: string[] = [
+// ─── Assets (android/app/src/main/assets) ────────────────────────────────────
+const MODEL_ASSET = 'fsl16_tcn_model.tflite';
+const LABELS_ASSET = 'FSL16_labels.txt'; // output index order; load it, never hard-code (spec 3)
+
+// Fallback ONLY if the labels asset can't be read. Must match FSL16_labels.txt.
+const FALLBACK_LABELS = [
   'GOOD MORNING', 'GOOD AFTERNOON', 'GOOD EVENING', 'HOW ARE YOU',
-  'THANK YOU', 'UNDERSTAND', 'KNOW', 'NO',
-  'YES', 'MONDAY', 'SUNDAY', 'TODAY',
+  'THANK YOU', 'KNOW', 'SUNDAY', 'YES',
   'TOMORROW', 'YESTERDAY', 'FATHER', 'MOTHER',
+  'NICE TO MEET YOU', 'SEE YOU TOMORROW', "DON'T KNOW", 'CORRECT',
 ];
 
+// Kept so any screen that still imports FSL16_LABELS keeps compiling (now the v2.0 list).
+export const FSL16_LABELS: string[] = FALLBACK_LABELS;
+
 // ─── Constants ───────────────────────────────────────────────────────────────
-const MODEL_ASSET = 'fsl16_gru_model.tflite';
-const SEQ_LEN = 30;
-const LANDMARKS = 21;
-const HAND_FEATURES = LANDMARKS * 3; // 63
-const FEATURES = HAND_FEATURES * 2; // 126
+// Spec: 15-30 fps works because every segment is resampled to 40 frames.
+const PROCESS_FPS = 15;
+const DEBUG_TCN = true; // logs top-3 for every sign and shows a debug line on screen
 
-// README: ~133 ms between samples (~7.5 per second) -> 30 samples ~ 4 seconds.
-const PROCESS_FPS = 7.5;           // frame-processor rate = model's training sample rate
-const SAMPLE_INTERVAL_MS = 90;     // just drops duplicate ticks; real spacing comes from PROCESS_FPS
-
-const CONF_THRESHOLD = 0.7;        // README: starting value, tune with real testing
-const MIN_MARGIN = 0.25;           // top1 must beat top2 by at least this much
-const MIN_HAND_FRAMES = 4;         // fewer hand samples than this is a blip, not a sign
-const END_GAP_SAMPLES = 3;         // hand gone this many samples (~0.4 s) = sign finished
-
-// Set true while tuning: logs top-3 scores for every prediction.
-const DEBUG_GRU = true;
-
-// Landmark rotation (degrees clockwise) that makes hands come out upright.
-// Verify on the phone: with a hand held fingers-up the debug line must say UPRIGHT.
-const DEFAULT_ROTATION = 270;
-
-// README tests (10 clips, same model) were best with mirror OFF (raw camera view of the signer).
-// Toggle on screen to compare on the phone.
-const MIRROR_FRONT_CAMERA = false;
-const MIRROR_BACK_CAMERA = false;
+// Rotation (degrees clockwise) applied to the camera frame before MediaPipe so it is UPRIGHT.
+// 'auto' = use the camera's own orientation. Cycle it on screen if the debug line says the
+// body is not UPRIGHT. Never mirror the analysis image (spec 4.2).
+export type RotationSetting = 'auto' | 0 | 90 | 180 | 270;
+const ROTATION_CYCLE: RotationSetting[] = ['auto', 0, 90, 180, 270];
 
 export type CameraPosition = 'front' | 'back';
-export type MotionStatus = 'idle' | 'noHand' | 'collecting' | 'still' | 'unknown' | 'ready';
+// idle = not started | waiting = started, no sign yet | recording = hands are up
+// unsure = last sign was below the confidence/margin rule | ready = a sign was recognised
+export type MotionStatus = 'idle' | 'waiting' | 'recording' | 'unsure' | 'ready';
 export type SignDetection = { label: string; confidence: number };
-type Prediction = SignDetection & { idx: number; margin: number };
-type Sample = { f: Float32Array; h: boolean };
 
-// Native plugin (HandLandmarkerPlugin.kt). Null if it isn't registered in this build.
-const handsPlugin = VisionCameraProxy.initFrameProcessorPlugin('detectHands', {});
-export const HAND_PLUGIN_AVAILABLE = handsPlugin != null;
-
-// Raw normalized deltas (README 4.2).
-const X_SCALE = 1;
-const Y_SCALE = 1;
-const Z_SCALE = 1;
-
-// ─── Preprocessing ───────────────────────────────────────────────────────────
-// hands: up to 2 arrays of 63 raw floats, in MediaPipe detection order.
-// Each hand is made wrist-relative on its own; a missing 2nd hand stays zeros.
-// Rotate a (dx, dy) delta clockwise in image coords (y down) by 0/90/180/270.
-function rotDelta(dx: number, dy: number, rot: number): [number, number] {
-  if (rot === 90) return [-dy, dx];
-  if (rot === 180) return [-dx, -dy];
-  if (rot === 270) return [dy, -dx];
-  return [dx, dy];
-}
-
-// Is a hand with fingers pointing up reported as upright? (wrist -> middle fingertip)
-function orientOf(lm: number[] | undefined, rot: number): string {
-  if (!lm || lm.length < HAND_FEATURES) return '-';
-  const [dx, dy] = rotDelta(lm[36] - lm[0], lm[37] - lm[1], rot);
-  const tag =
-    Math.abs(dy) < Math.abs(dx) ? 'SIDEWAYS' : dy < 0 ? 'UPRIGHT' : 'UPSIDE-DOWN';
-  return `${tag} (dx ${dx.toFixed(2)}, dy ${dy.toFixed(2)})`;
-}
-
-function buildFrame(hands: number[][], mirror: boolean, rot: number): Float32Array {
-  const frame = new Float32Array(FEATURES);
-  const count = Math.min(hands.length, 2);
-  for (let h = 0; h < count; h++) {
-    const lm = hands[h];
-    if (!lm || lm.length < HAND_FEATURES) continue;
-    const wx = lm[0];
-    const wy = lm[1];
-    const wz = lm[2];
-    const base = h * HAND_FEATURES;
-    for (let i = 0; i < LANDMARKS; i++) {
-      const [rx, ry] = rotDelta(lm[i * 3] - wx, lm[i * 3 + 1] - wy, rot);
-      const dx = rx * X_SCALE;
-      frame[base + i * 3] = mirror ? -dx : dx;
-      frame[base + i * 3 + 1] = ry * Y_SCALE;
-      frame[base + i * 3 + 2] = (lm[i * 3 + 2] - wz) * Z_SCALE;
-    }
-  }
-  return frame;
-}
+// Native plugin (PoseHandLandmarkerPlugin.kt). Null if it isn't registered in this build.
+const landmarkPlugin = VisionCameraProxy.initFrameProcessorPlugin('detectLandmarks', {});
+export const HAND_PLUGIN_AVAILABLE = landmarkPlugin != null;
 
 function toSpeechText(label: string): string {
   return label.toLowerCase();
 }
 
-// Put the finished sign in the middle of a 30-sample window; the rest is zeros ("no hand"),
-// like the idle time around a sign in the training clips.
-function centreWindow(sign: Sample[]): Sample[] {
-  const body = sign.slice(0, SEQ_LEN);
-  const pad = SEQ_LEN - body.length;
-  const before = Math.floor(pad / 2);
-  const blank = (): Sample => ({ f: new Float32Array(FEATURES), h: false });
-  return [
-    ...Array.from({ length: before }, blank),
-    ...body,
-    ...Array.from({ length: pad - before }, blank),
-  ];
+async function loadLabels(): Promise<string[]> {
+  try {
+    const txt = await RNFS.readFileAssets(LABELS_ASSET, 'utf8');
+    const labels = txt.split(/\r?\n/).map(l => l.trim()).filter(l => l.length > 0);
+    if (labels.length > 0) return labels;
+  } catch (e) {
+    console.warn('[MotionTranslator] could not read labels asset, using fallback:', e);
+  }
+  return FALLBACK_LABELS;
+}
+
+// Debug helper (spec 4.2): is the signer upright?  nose must be above the shoulder line.
+function orientationCheck(res: LandmarkResult): string {
+  const p = res.pose;
+  if (!p || p.length < 34) return 'no pose';
+  const noseY = p[1];
+  const shY = (p[11 * 2 + 1] + p[12 * 2 + 1]) / 2;
+  const dx = Math.abs(p[11 * 2] - p[12 * 2]);
+  const dy = Math.abs(p[11 * 2 + 1] - p[12 * 2 + 1]);
+  if (dy > dx) return 'SIDEWAYS -> change rotation';
+  return noseY < shY ? 'UPRIGHT' : 'UPSIDE-DOWN -> change rotation';
 }
 
 // ─── Hook ────────────────────────────────────────────────────────────────────
@@ -146,11 +112,6 @@ export function useMotionSignTranslator() {
   const backDevice = useCameraDevice('back');
 
   const [cameraPosition, setCameraPosition] = useState<CameraPosition>('front');
-  const cameraPositionRef = useRef<CameraPosition>('front');
-  useEffect(() => {
-    cameraPositionRef.current = cameraPosition;
-  }, [cameraPosition]);
-
   const hasBackCamera = !!backDevice;
   const device =
     cameraPosition === 'back' ? (backDevice ?? frontDevice) : (frontDevice ?? backDevice);
@@ -166,7 +127,9 @@ export function useMotionSignTranslator() {
   const [isDetecting, setIsDetecting] = useState(false);
   const [detection, setDetection] = useState<SignDetection | null>(null);
   const [status, setStatusState] = useState<MotionStatus>('idle');
-  const [progress, setProgress] = useState(0); // hand samples currently in the 4 s window
+  const [recordingMs, setRecordingMs] = useState(0);
+  const [topGuesses, setTopGuesses] = useState<{ label: string; p: number }[]>([]);
+  const [debugText, setDebugText] = useState('');
 
   const statusRef = useRef<MotionStatus>('idle');
   const setStatus = useCallback((s: MotionStatus) => {
@@ -178,26 +141,21 @@ export function useMotionSignTranslator() {
 
   const isDetectingRef = useRef(false);
   const detectingSV = useSharedValue(false); // read inside the frame processor worklet
-  const lastSampleRef = useRef(0);
-  const signRef = useRef<Sample[]>([]);           // samples of the sign in progress (hand first seen -> now)
-  const missRef = useRef(0);                      // consecutive samples with no hand
-  const topRef = useRef('');
-  const selfTestRef = useRef('');
-  const [debugText, setDebugText] = useState('');
-  // 270 was found by testing: it makes a hand pointing up read as UPRIGHT.
-  const [rotDeg, setRotDeg] = useState(DEFAULT_ROTATION);
-  const rotRef = useRef(DEFAULT_ROTATION);
+  const rotationSV = useSharedValue(-1); // -1 = auto; else 0/90/180/270
+  const segmenterRef = useRef(new SignSegmenter());
+  const lastUiMsRef = useRef(0);
+  const lastDebugMsRef = useRef(0);
+  const lastTopRef = useRef('');
 
-  // Runtime mirror override (null = use per-camera default)
-  const [mirrorOverride, setMirrorOverride] = useState<boolean | null>(null);
-  const mirrorOverrideRef = useRef<boolean | null>(null);
+  const [rotation, setRotation] = useState<RotationSetting>('auto');
 
   const cardOpacity = useRef(new Animated.Value(0)).current;
   const cardScale = useRef(new Animated.Value(0.85)).current;
 
-  // ─── Model ─────────────────────────────────────────────────────────
+  // ─── Model + labels ────────────────────────────────────────────────
   const [model, setModel] = useState<TensorflowModel | null>(null);
   const modelRef = useRef<TensorflowModel | null>(null);
+  const labelsRef = useRef<string[]>(FALLBACK_LABELS);
   const [modelState, setModelState] = useState<'loading' | 'loaded' | 'error'>('loading');
 
   useEffect(() => {
@@ -205,6 +163,8 @@ export function useMotionSignTranslator() {
     (async () => {
       try {
         setModelState('loading');
+        const labels = await loadLabels();
+
         const localPath = `${RNFS.CachesDirectoryPath}/${MODEL_ASSET}`;
         // Always re-copy so an updated model in the APK is never shadowed by a stale cache
         if (await RNFS.exists(localPath)) await RNFS.unlink(localPath);
@@ -212,23 +172,19 @@ export function useMotionSignTranslator() {
 
         const loaded = await loadTensorflowModel({ url: `file://${localPath}` }, []);
         if (cancelled) return;
-        modelRef.current = loaded;
-        if (DEBUG_GRU) {
-          try {
-            const top = (arr: Float32Array) => {
-              let b = 0;
-              for (let i = 1; i < arr.length; i++) if (arr[i] > arr[b]) b = i;
-              return `${FSL16_LABELS[b]} ${Math.round(arr[b] * 100)}`;
-            };
-            const zeros = new Float32Array(SEQ_LEN * FEATURES);
-            const z = new Float32Array(loaded.runSync([zeros.buffer as ArrayBuffer])[0]);
-            // Note: the model has no "no sign" class (zeros -> YES). Empty windows are never sent to it.
-            selfTestRef.current = `\nself-test: zeros->${top(z)} (never used)`;
-            console.log('[GRU selftest]', selfTestRef.current);
-          } catch (e) {
-            console.warn('[GRU selftest] failed', e);
-          }
+
+        // Spec 9.2: input [1,40,272] Float32, output [1,N] Float32, N == number of labels.
+        const inShape = loaded.inputs?.[0]?.shape;
+        const outShape = loaded.outputs?.[0]?.shape;
+        if (inShape && (inShape[1] !== T_FRAMES || inShape[2] !== FEATURE_DIM)) {
+          throw new Error(`unexpected model input shape ${JSON.stringify(inShape)}`);
         }
+        if (outShape && outShape[outShape.length - 1] !== labels.length) {
+          throw new Error(`model has ${outShape[outShape.length - 1]} outputs but ${labels.length} labels`);
+        }
+
+        labelsRef.current = labels;
+        modelRef.current = loaded;
         setModel(loaded);
         setModelState('loaded');
       } catch (e) {
@@ -245,143 +201,130 @@ export function useMotionSignTranslator() {
 
   const isModelReady = modelState === 'loaded' && !!model;
 
-  // ─── Inference on the current 30-sample window ─────────────────────
-  const predict = useCallback((win: Sample[]): Prediction | null => {
-    const m = modelRef.current;
-    if (!m || win.length !== SEQ_LEN) return null;
-
-    const input = new Float32Array(SEQ_LEN * FEATURES);
-    for (let t = 0; t < SEQ_LEN; t++) input.set(win[t].f, t * FEATURES);
-
-    const outputs = m.runSync([input.buffer as ArrayBuffer]);
-    const scores = new Float32Array(outputs[0]);
-    const ranked = Array.from(scores)
-      .map((s, i) => ({ i, s }))
-      .sort((a, b) => b.s - a.s);
-    const best = ranked[0];
-    const second = ranked[1];
-
-    if (DEBUG_GRU) {
-      topRef.current = 'top: ' + ranked.slice(0, 3).map(r => `${FSL16_LABELS[r.i]} ${Math.round(r.s * 100)}`).join(' | ');
-      console.log('[GRU]', topRef.current);
-    }
-
-    return {
-      idx: best.i,
-      label: FSL16_LABELS[best.i] ?? `Class_${best.i}`,
-      confidence: best.s,
-      margin: best.s - (second?.s ?? 0),
-    };
-  }, []);
-
-  // Clears the sign in progress (used on start/stop, camera switch, mirror/rotation change).
-  const resetRecording = useCallback(() => {
-    signRef.current = [];
-    missRef.current = 0;
-    setProgress(0);
-  }, []);
-
-  // ─── Called (on the JS thread) with each landmarker result ─────────
-  // Hand appears -> collect samples (~133 ms apart). Hand gone ~0.4 s (or 30 samples) -> classify once.
-  const handleHands = useCallback(
-    (hands: number[][] | null) => {
-      if (!isDetectingRef.current || !modelRef.current) return;
-
-      const now = Date.now();
-      const prevSample = lastSampleRef.current;
-      if (now - prevSample < SAMPLE_INTERVAL_MS) return;
-      lastSampleRef.current = now;
-      const dt = prevSample ? now - prevSample : 0;
-
-      const has = !!hands && hands.length > 0;
-      const mirror =
-        mirrorOverrideRef.current ??
-        (cameraPositionRef.current === 'front' ? MIRROR_FRONT_CAMERA : MIRROR_BACK_CAMERA);
-      const sign = signRef.current;
-
-      // Nothing in progress and no hand: idle. Keep a finished result on screen.
-      if (!has && sign.length === 0) {
-        setStatus(statusRef.current === 'collecting' || statusRef.current === 'idle' ? 'noHand' : statusRef.current);
-        return;
-      }
-
-      const frame = has ? buildFrame(hands as number[][], mirror, rotRef.current) : new Float32Array(FEATURES);
-
-      // A new sign starting does NOT clear the last result: it stays on screen until a new result replaces it.
-      sign.push({ f: frame, h: has });
-      missRef.current = has ? 0 : missRef.current + 1;
-
-      let handCount = 0;
-      for (let i = 0; i < sign.length; i++) if (sign[i].h) handCount++;
-      setProgress(Math.min(sign.length, SEQ_LEN));
-      setStatus('collecting');
-
-      if (DEBUG_GRU) {
-        setDebugText(
-          `hands ${has ? hands!.length : 0} | ${has ? orientOf(hands![0], rotRef.current) : '-'} | dt ${dt}ms | sign ${sign.length}/${SEQ_LEN} (hand samples ${handCount}) | mirror ${mirror ? 'ON' : 'OFF'}\n${topRef.current}${selfTestRef.current}`,
-        );
-      }
-
-      const ended = !has && missRef.current >= END_GAP_SAMPLES;
-      const full = sign.length >= SEQ_LEN;
-      if (!ended && !full) return;
-
-      // The sign is over: drop the trailing "no hand" samples, centre it in a 30-sample window, classify once.
-      const finished = ended ? sign.slice(0, sign.length - missRef.current) : sign.slice();
-      signRef.current = [];
-      missRef.current = 0;
-      setProgress(0);
-
-      let hc = 0;
-      for (let i = 0; i < finished.length; i++) if (finished[i].h) hc++;
-      if (hc < MIN_HAND_FRAMES) {
-        setStatus('noHand'); // just a blip
-        return;
-      }
-
+  // ─── Classify one finished sign ────────────────────────────────────
+  const classify = useCallback(
+    (frames: Float32Array[]) => {
+      const m = modelRef.current;
+      if (!m) return;
       try {
-        const result = predict(centreWindow(finished));
-        if (result && result.confidence >= CONF_THRESHOLD && result.margin >= MIN_MARGIN) {
-          if (DEBUG_GRU) {
-            console.log('[sign]', result.label, 'conf', result.confidence.toFixed(2), 'margin', result.margin.toFixed(2), 'samples', finished.length);
-          }
+        const feats = preprocess(frames); // Float32Array(40 * 272)
+        const outputs = m.runSync([feats.buffer as ArrayBuffer]);
+        const probs = new Float32Array(outputs[0]);
+        const result = decide(probs, labelsRef.current);
+
+        if (DEBUG_TCN) {
+          const ranked = Array.from(probs).map((p, i) => ({ p, i })).sort((a, b) => b.p - a.p).slice(0, 3);
+          lastTopRef.current =
+            'top: ' + ranked.map(r => `${labelsRef.current[r.i]} ${Math.round(r.p * 100)}`).join(' | ');
+          console.log('[TCN]', lastTopRef.current, '| frames', frames.length);
+        }
+
+        if (result.kind === 'sign') {
           setDetection({ label: result.label, confidence: result.confidence });
+          setTopGuesses([]);
           setStatus('ready');
+        } else if (result.kind === 'other') {
+          // movement that is not a sign: show nothing (spec 7)
+          setDetection(null);
+          setTopGuesses([]);
+          setStatus('waiting');
         } else {
           setDetection(null);
-          setStatus('unknown');
+          setTopGuesses(result.top);
+          setStatus('unsure');
         }
       } catch (e) {
         console.warn('[MotionTranslator] inference error:', e);
+        setStatus('waiting');
       }
     },
-    [predict, setStatus],
+    [setStatus],
   );
 
-  const handleHandsJS = useMemo(() => Worklets.createRunOnJS(handleHands), [handleHands]);
+  // ─── Called (JS thread) with each landmark result ──────────────────
+  const handleLandmarks = useCallback(
+    (res: LandmarkResult | null) => {
+      if (!isDetectingRef.current || !modelRef.current || !res) return;
+
+      const seg = segmenterRef.current;
+      const frame = resultsToFrame(res);
+      const ts = res.ts > 0 ? res.ts : Date.now();
+      const ev = seg.push(frame, ts);
+
+      if (ev.type === 'started') {
+        // a new sign starting does NOT clear the last result; it stays until replaced
+        setStatus('recording');
+      } else if (ev.type === 'segment') {
+        setRecordingMs(0);
+        classify(ev.frames);
+      } else if (ev.type === 'discarded') {
+        setRecordingMs(0);
+        setStatus('waiting');
+      }
+
+      if (seg.state === 'recording') {
+        // throttle UI updates to ~5 per second
+        const now = Date.now();
+        if (now - lastUiMsRef.current > 200) {
+          lastUiMsRef.current = now;
+          setRecordingMs(Math.min(seg.recordingMs, seg.maxMs));
+        }
+      }
+
+      if (DEBUG_TCN) {
+        const now = Date.now();
+        if (now - lastDebugMsRef.current > 250 || ev.type !== 'none') {
+          lastDebugMsRef.current = now;
+          const hasL = !Number.isNaN(frame[L_OFF * 3]);
+          const hasR = !Number.isNaN(frame[R_OFF * 3]);
+          let sideCheck = '';
+          if (hasL !== hasR) {
+            // spec 4.2: a raised RIGHT hand must appear on the image LEFT and land in the RIGHT slot
+            const x = (hasR ? frame[R_OFF * 3] : frame[L_OFF * 3]) / (res.w / res.h);
+            sideCheck = ` | ${hasR ? 'R' : 'L'} hand on image-${x < 0.5 ? 'left' : 'right'}`;
+          }
+          setDebugText(
+            `${orientationCheck(res)} | hands L${hasL ? '✓' : '-'} R${hasR ? '✓' : '-'}${sideCheck}` +
+              `\nfps ${seg.fps.toFixed(0)} | ${seg.state} ${seg.segmentLength}f | ${res.w}x${res.h}` +
+              `\n${lastTopRef.current}`,
+          );
+        }
+      }
+    },
+    [classify, setStatus],
+  );
+
+  const handleLandmarksJS = useMemo(() => Worklets.createRunOnJS(handleLandmarks), [handleLandmarks]);
 
   // ─── Frame processor (worklet thread) ──────────────────────────────
   const frameProcessor = useFrameProcessor(
     frame => {
       'worklet';
-      if (!detectingSV.value || handsPlugin == null) return;
+      if (!detectingSV.value || landmarkPlugin == null) return;
       runAtTargetFps(PROCESS_FPS, () => {
         'worklet';
-        const hands = handsPlugin.call(frame) as number[][] | null;
-        handleHandsJS(hands ?? null);
+        const res = landmarkPlugin.call(frame, { rotation: rotationSV.value }) as unknown as LandmarkResult | null;
+        if (res) handleLandmarksJS(res);
       });
     },
-    [handleHandsJS, detectingSV],
+    [handleLandmarksJS, detectingSV, rotationSV],
   );
+
+  // Clears the sign in progress (start/stop, camera switch, rotation change).
+  const resetCapture = useCallback(() => {
+    segmenterRef.current.reset();
+    setRecordingMs(0);
+    setTopGuesses([]);
+  }, []);
 
   // ─── Camera switching ──────────────────────────────────────────────
   const toggleCamera = useCallback(() => {
     if (!backDevice || !frontDevice) return;
-    resetRecording();
+    resetCapture();
     setDetection(null);
-    setStatus(isDetectingRef.current ? 'still' : 'idle');
+    setStatus(isDetectingRef.current ? 'waiting' : 'idle');
     setCameraPosition(prev => (prev === 'front' ? 'back' : 'front'));
-  }, [backDevice, frontDevice, resetRecording, setStatus]);
+  }, [backDevice, frontDevice, resetCapture, setStatus]);
 
   // ─── Voice ─────────────────────────────────────────────────────────
   const [isVoiceEnabled, setIsVoiceEnabled] = useState(true);
@@ -449,41 +392,24 @@ export function useMotionSignTranslator() {
     isDetectingRef.current = next;
     detectingSV.value = next;
 
-    resetRecording();
-    lastSampleRef.current = 0;
+    resetCapture();
     setDetection(null);
-    setStatus(next ? 'still' : 'idle'); // 'still' = "Waiting for a sign…"
+    setStatus(next ? 'waiting' : 'idle');
     setIsDetecting(next);
     if (!next) Speech.stop();
-  }, [detectingSV, resetRecording, setStatus]);
+  }, [detectingSV, resetCapture, setStatus]);
 
-  // ─── Mirror toggle ─────────────────────────────────────────────────
-  const toggleMirror = useCallback(() => {
-    const defaultMirror =
-      cameraPositionRef.current === 'front' ? MIRROR_FRONT_CAMERA : MIRROR_BACK_CAMERA;
-    const current = mirrorOverrideRef.current ?? defaultMirror;
-    const next = !current;
-    mirrorOverrideRef.current = next;
-    setMirrorOverride(next);
-    resetRecording();
-    setDetection(null);
-  }, [resetRecording]);
-
+  // ─── Rotation (debug aid; 'auto' should normally be right) ─────────
   const toggleRotation = useCallback(() => {
-    const next = (rotRef.current + 90) % 360;
-    rotRef.current = next;
-    setRotDeg(next);
-    resetRecording();
+    const next = ROTATION_CYCLE[(ROTATION_CYCLE.indexOf(rotation) + 1) % ROTATION_CYCLE.length];
+    rotationSV.value = next === 'auto' ? -1 : next;
+    setRotation(next);
+    resetCapture();
     setDetection(null);
-  }, [resetRecording]);
-
-  const isMirrored =
-    mirrorOverride ?? (cameraPosition === 'front' ? MIRROR_FRONT_CAMERA : MIRROR_BACK_CAMERA);
+  }, [rotation, rotationSV, resetCapture]);
 
   return {
-    isMirrored,
-    toggleMirror,
-    rotDeg,
+    rotation,
     toggleRotation,
     debugText,
     hasPermission,
@@ -495,9 +421,10 @@ export function useMotionSignTranslator() {
     toggleCamera,
     isDetecting,
     detection,
+    topGuesses,
     status,
-    progress,
-    seqLen: SEQ_LEN,
+    recordingMs,
+    maxRecordingMs: segmenterRef.current.maxMs,
     isModelReady,
     modelState,
     pluginAvailable: HAND_PLUGIN_AVAILABLE,

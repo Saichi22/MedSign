@@ -1,0 +1,117 @@
+package com.yourapp.plugins // <- change to your package (same one as HandLandmarkerPlugin.kt)
+
+import android.os.SystemClock
+import com.google.mediapipe.framework.image.BitmapImageBuilder
+import com.google.mediapipe.tasks.core.BaseOptions
+import com.google.mediapipe.tasks.vision.core.ImageProcessingOptions
+import com.google.mediapipe.tasks.vision.core.RunningMode
+import com.google.mediapipe.tasks.vision.handlandmarker.HandLandmarker
+import com.google.mediapipe.tasks.vision.poselandmarker.PoseLandmarker
+import com.mrousavy.camera.frameprocessors.Frame
+import com.mrousavy.camera.frameprocessors.FrameProcessorPlugin
+import com.mrousavy.camera.frameprocessors.VisionCameraProxy
+
+/**
+ * FSL16 TCN landmark plugin (spec v2.0, section 4).  Replaces HandLandmarkerPlugin ("detectHands").
+ *
+ * Runs MediaPipe Pose Landmarker AND Hand Landmarker on the SAME frame, on an UPRIGHT, NOT-mirrored
+ * image, and returns raw normalised landmarks. Slot assignment (left/right hand), the 59x3 layout and
+ * all maths are done in TypeScript (utils/fslPreprocess.ts) where they are tested against the
+ * reference vectors.
+ *
+ * JS call:  plugin.call(frame, { rotation: -1 | 0 | 90 | 180 | 270 })   // -1 = use the camera's orientation
+ * Returns:  { w, h, ts, pose: [x0,y0,...x16,y16] | [], hands: [{ lm: [x,y,z * 21], label }] }
+ *           w,h = size of the upright image; x,y,z normalised exactly as MediaPipe reports them.
+ */
+class PoseHandLandmarkerPlugin(proxy: VisionCameraProxy, options: Map<String, Any>?) :
+    FrameProcessorPlugin() {
+
+    private val hand: HandLandmarker
+    private val pose: PoseLandmarker
+    private var lastTs = 0L
+
+    init {
+        val ctx = proxy.context
+
+        // Spec 4.1: numHands 2, all three hand confidences 0.4
+        hand = HandLandmarker.createFromOptions(
+            ctx,
+            HandLandmarker.HandLandmarkerOptions.builder()
+                .setBaseOptions(BaseOptions.builder().setModelAssetPath("hand_landmarker.task").build())
+                .setRunningMode(RunningMode.VIDEO)
+                .setNumHands(2)
+                .setMinHandDetectionConfidence(0.4f)
+                .setMinHandPresenceConfidence(0.4f)
+                .setMinTrackingConfidence(0.4f)
+                .build()
+        )
+
+        // Spec 4.1: numPoses 1, other settings default
+        pose = PoseLandmarker.createFromOptions(
+            ctx,
+            PoseLandmarker.PoseLandmarkerOptions.builder()
+                .setBaseOptions(BaseOptions.builder().setModelAssetPath("pose_landmarker_full.task").build())
+                .setRunningMode(RunningMode.VIDEO)
+                .setNumPoses(1)
+                .build()
+        )
+    }
+
+    override fun callback(frame: Frame, arguments: Map<String, Any>?): Any? {
+        // ── 1. frame -> Bitmap.  If your HandLandmarkerPlugin.kt already converts the Frame to a
+        //       Bitmap (it must, to feed MediaPipe), reuse that exact conversion here.
+        val bitmap = frame.imageProxy.toBitmap()
+
+        // ── 2. rotate to UPRIGHT (clockwise degrees). Never mirror (spec 4.2).
+        val requested = (arguments?.get("rotation") as? Number)?.toInt() ?: -1
+        val rotation = if (requested >= 0) requested else frame.orientation.toDegrees()
+        val procOptions = ImageProcessingOptions.builder().setRotationDegrees(rotation).build()
+        val swapped = rotation == 90 || rotation == 270
+        val w = if (swapped) bitmap.height else bitmap.width
+        val h = if (swapped) bitmap.width else bitmap.height
+
+        val mpImage = BitmapImageBuilder(bitmap).build()
+
+        // VIDEO mode needs strictly increasing timestamps
+        var ts = SystemClock.uptimeMillis()
+        if (ts <= lastTs) ts = lastTs + 1
+        lastTs = ts
+
+        // ── 3. same frame, same timestamp, both landmarkers
+        val handRes = hand.detectForVideo(mpImage, procOptions, ts)
+        val poseRes = pose.detectForVideo(mpImage, procOptions, ts)
+
+        // ── 4. pack the result (plain lists/maps/doubles are supported by VisionCamera)
+        val poseOut = ArrayList<Double>()
+        val poseLms = poseRes.landmarks()
+        if (poseLms.isNotEmpty()) {
+            val lms = poseLms[0]
+            for (i in 0 until 17) {
+                poseOut.add(lms[i].x().toDouble())
+                poseOut.add(lms[i].y().toDouble())
+            }
+        }
+
+        val handsOut = ArrayList<Any>()
+        val handLms = handRes.landmarks()
+        val handed = handRes.handedness()
+        for (k in handLms.indices) {
+            val lm = ArrayList<Double>(63)
+            for (p in handLms[k]) {
+                lm.add(p.x().toDouble()); lm.add(p.y().toDouble()); lm.add(p.z().toDouble())
+            }
+            val entry = HashMap<String, Any>()
+            entry["lm"] = lm
+            entry["label"] = if (k < handed.size && handed[k].isNotEmpty()) handed[k][0].categoryName() else ""
+            handsOut.add(entry)
+        }
+
+        val out = HashMap<String, Any>()
+        out["w"] = w.toDouble()
+        out["h"] = h.toDouble()
+        out["ts"] = ts.toDouble()
+        out["pose"] = poseOut
+        out["hands"] = handsOut
+        return out
+    }
+}
