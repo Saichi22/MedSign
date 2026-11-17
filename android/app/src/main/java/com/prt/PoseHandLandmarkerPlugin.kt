@@ -1,4 +1,4 @@
-package com.yourapp.plugins // <- change to your package (same one as HandLandmarkerPlugin.kt)
+package com.prt
 
 import android.os.SystemClock
 import com.google.mediapipe.framework.image.BitmapImageBuilder

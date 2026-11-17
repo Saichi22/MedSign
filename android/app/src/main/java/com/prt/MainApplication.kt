@@ -26,6 +26,9 @@ class MainApplication : Application(), ReactApplication {
     FrameProcessorPluginRegistry.addFrameProcessorPlugin("detectHands") { proxy, options ->
     HandLandmarkerPlugin(proxy, options)
 }
+    FrameProcessorPluginRegistry.addFrameProcessorPlugin("detectLandmarks") { proxy, options ->
+    PoseHandLandmarkerPlugin(proxy, options)
+}
     loadReactNative(this)
   }
 }

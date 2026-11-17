@@ -5,13 +5,20 @@ import { useNavigation } from '@react-navigation/native';
 
 import { COLOR, FONT, RADIUS } from '../../../../styles/colors/theme';
 
+// Which screen "Sign to Speech" should open. A sign screen tells ModeTabs about itself
+// (signRoute prop); without it we assume the image translator. This is what lets
+// Speech to Sign -> Sign to Speech return to the Motion translator when you came from there.
+let lastSignRoute = 'Translator';
+
 export const MODE_TABS = [
-  { key: 'sign', label: 'Sign to Speech', route: 'Translator' },
+  { key: 'sign', label: 'Sign to Speech', route: null }, // resolved at press time
   { key: 'speech', label: 'Speech to Sign', route: 'SpeechToSign' },
 ];
 
-export default function ModeTabs({ active }) {
+export default function ModeTabs({ active, signRoute }) {
   const navigation = useNavigation();
+
+  if (active === 'sign') lastSignRoute = signRoute || 'Translator';
 
   return (
     <View style={s.wrap}>
@@ -21,7 +28,7 @@ export default function ModeTabs({ active }) {
           <TouchableOpacity
             key={t.key}
             style={[s.tab, isActive && s.tabActive]}
-            onPress={() => !isActive && navigation.replace(t.route)}
+            onPress={() => !isActive && navigation.replace(t.route || lastSignRoute)}
             activeOpacity={0.85}
           >
             <Text style={[s.text, isActive && s.textActive]} numberOfLines={1}>

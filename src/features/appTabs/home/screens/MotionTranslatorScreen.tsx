@@ -343,7 +343,7 @@ export default function MotionTranslatorScreen() {
         showsVerticalScrollIndicator={false}
       >
 
-      <ModeTabs active="sign" />
+      <ModeTabs active="sign" signRoute="MotionTranslator" />
         {!!debugText && (
           <Text style={{ fontSize: 11, color: COLOR.inkMuted, fontFamily: 'monospace' }}>{debugText}</Text>
         )}
