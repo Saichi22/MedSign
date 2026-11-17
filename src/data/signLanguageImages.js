@@ -26,5 +26,16 @@ export const SIGN_LANGUAGE_IMAGES = {
   X: require('../assets/images/singLanguage/ALPHABET/X.png'),
   Y: require('../assets/images/singLanguage/ALPHABET/Y.png'),
   Z: require('../assets/images/singLanguage/ALPHABET/Z.png'),
+  0: require('../assets/images/singLanguage/NUMBERS/0.jpg'),
+  1: require('../assets/images/singLanguage/NUMBERS/1.jpg'),
+  2: require('../assets/images/singLanguage/NUMBERS/2.jpg'),
+  3: require('../assets/images/singLanguage/NUMBERS/3.jpg'),
+  4: require('../assets/images/singLanguage/NUMBERS/4.jpg'),
+  5: require('../assets/images/singLanguage/NUMBERS/5.jpg'),
+  6: require('../assets/images/singLanguage/NUMBERS/6.jpg'),
+  7: require('../assets/images/singLanguage/NUMBERS/7.jpg'),
+  8: require('../assets/images/singLanguage/NUMBERS/8.jpg'),
+  9: require('../assets/images/singLanguage/NUMBERS/9.jpg'),
+  10: require('../assets/images/singLanguage/NUMBERS/9.jpg'),
 };
 

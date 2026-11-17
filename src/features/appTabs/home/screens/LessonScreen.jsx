@@ -11,7 +11,7 @@ import MaterialCommunityIcons from 'react-native-vector-icons/MaterialCommunityI
 
 import { COLOR, FONT, RADIUS } from '../../../../styles/colors/theme';
 import { learnStyles as styles } from '../../../../styles/colors/LearnStyle';
-import { PHRASES, LESSON_GROUPS, phrasesForGroup, detectorLabelFor } from '../../../../data/signLanguageData';
+import { PHRASES, LESSON_GROUPS, phrasesForGroup, detectorLabelFor, phraseById } from '../../../../data/signLanguageData';
 import { SIGN_MEDIA } from '../../../../data/signMedia';
 import { useSignPractice } from '../../../../hooks/useSignDetector';
 import { saveBestScore } from '../../../../utils/lessonScores';
@@ -33,6 +33,14 @@ const shuffle = (arr) => {
     [a[i], a[j]] = [a[j], a[i]];
   }
   return a;
+};
+
+// Image for a sign: SIGN_MEDIA first, then the phrase's own `image` field.
+// Plain URL strings are wrapped as { uri } so <Image> accepts them.
+const getSignImage = (phraseId) => {
+  const img = SIGN_MEDIA[phraseId] ?? phraseById(phraseId)?.image ?? null;
+  if (!img) return null;
+  return typeof img === 'string' ? { uri: img } : img;
 };
 
 // One question per lesson phrase. Distractors come from the same group first,
@@ -59,7 +67,7 @@ function buildQuestions(lessonPhrases, groupKey) {
 
 // ─── Sign stage: textured viewfinder frame, image or placeholder ─────────────
 function SignStage({ phraseId, fsl, label, showHint }) {
-  const media = SIGN_MEDIA[phraseId];
+  const media = getSignImage(phraseId);
   return (
     <View style={styles.signCard}>
       <View style={styles.signCardBlob} pointerEvents="none" />
@@ -111,6 +119,7 @@ const local = StyleSheet.create({
   targetEyebrow: { fontFamily: FONT.sans, fontSize: 10, fontWeight: '700', color: COLOR.inkFaint, letterSpacing: 1.4 },
   targetFsl: { fontFamily: FONT.serif, fontSize: 30, color: COLOR.inkPrimary, letterSpacing: -0.5, textAlign: 'center', marginTop: 4 },
   targetEnglish: { fontFamily: FONT.sans, fontSize: 14, fontWeight: '600', color: COLOR.tealMid, marginTop: 2, textAlign: 'center' },
+  targetImg: { width: 120, height: 120, marginTop: 10 },
   cameraCard: {
     height: 320,
     borderRadius: RADIUS.xl,
@@ -555,6 +564,8 @@ export default function LessonScreen() {
     return i === index ? styles.segCurrent : null;
   };
 
+  const practiceImg = isPractice && practiceCard ? getSignImage(practiceCard.id) : null;
+
   return (
     <View style={styles.root}>
       <StatusBar barStyle="light-content" backgroundColor={COLOR.tealDeep} />
@@ -647,6 +658,9 @@ export default function LessonScreen() {
                 <Text style={local.targetEyebrow}>SHOW THIS SIGN</Text>
                 <Text style={local.targetFsl}>{practiceCard.fsl}</Text>
                 <Text style={local.targetEnglish}>{practiceCard.english}</Text>
+                {practiceImg ? (
+                  <Image source={practiceImg} style={local.targetImg} resizeMode="contain" />
+                ) : null}
               </View>
               <PracticeCamera practice={practice} active={isPractice} />
             </>
