@@ -94,15 +94,26 @@ async function loadLabels(): Promise<string[]> {
 }
 
 // Debug helper (spec 4.2): is the signer upright?  nose must be above the shoulder line.
-function orientationCheck(res: LandmarkResult): string {
+// Returns U (upright) / S (sideways) / D (upside-down) / '-' (no pose) for ONE frame.
+function orientationCode(res: LandmarkResult): 'U' | 'S' | 'D' | '-' {
   const p = res.pose;
-  if (!p || p.length < 34) return 'no pose';
+  if (!p || p.length < 34) return '-';
   const noseY = p[1];
   const shY = (p[11 * 2 + 1] + p[12 * 2 + 1]) / 2;
   const dx = Math.abs(p[11 * 2] - p[12 * 2]);
   const dy = Math.abs(p[11 * 2 + 1] - p[12 * 2 + 1]);
-  if (dy > dx) return 'SIDEWAYS -> change rotation';
-  return noseY < shY ? 'UPRIGHT' : 'UPSIDE-DOWN -> change rotation';
+  if (dy > dx) return 'S';
+  return noseY < shY ? 'U' : 'D';
+}
+
+const ORIENT_WINDOW = 20; // frames used for the on-screen majority vote
+function orientationSummary(hist: string[]): string {
+  const n = (c: string) => hist.filter(h => h === c).length;
+  const U = n('U'), S = n('S'), D = n('D');
+  const best = Math.max(U, S, D);
+  if (best === 0) return 'no pose';
+  const word = best === U ? 'UPRIGHT' : best === S ? 'SIDEWAYS' : 'UPSIDE-DOWN';
+  return `${word} (U${U} S${S} D${D} of ${hist.length})`;
 }
 
 // ─── Hook ────────────────────────────────────────────────────────────────────
@@ -146,6 +157,7 @@ export function useMotionSignTranslator() {
   const lastUiMsRef = useRef(0);
   const lastDebugMsRef = useRef(0);
   const lastTopRef = useRef('');
+  const orientHistRef = useRef<string[]>([]);
 
   const [rotation, setRotation] = useState<RotationSetting>('auto');
 
@@ -248,6 +260,9 @@ export function useMotionSignTranslator() {
 
       const seg = segmenterRef.current;
       const frame = resultsToFrame(res);
+      const oh = orientHistRef.current;
+      oh.push(orientationCode(res));
+      if (oh.length > ORIENT_WINDOW) oh.shift();
       const ts = res.ts > 0 ? res.ts : Date.now();
       const ev = seg.push(frame, ts);
 
@@ -284,7 +299,7 @@ export function useMotionSignTranslator() {
             sideCheck = ` | ${hasR ? 'R' : 'L'} hand on image-${x < 0.5 ? 'left' : 'right'}`;
           }
           setDebugText(
-            `${orientationCheck(res)} | hands L${hasL ? '✓' : '-'} R${hasR ? '✓' : '-'}${sideCheck}` +
+            `${orientationSummary(orientHistRef.current)} | hands L${hasL ? '✓' : '-'} R${hasR ? '✓' : '-'}${sideCheck}` +
               `\nfps ${seg.fps.toFixed(0)} | ${seg.state} ${seg.segmentLength}f | ${res.w}x${res.h}` +
               `\n${lastTopRef.current}`,
           );
@@ -313,6 +328,7 @@ export function useMotionSignTranslator() {
   // Clears the sign in progress (start/stop, camera switch, rotation change).
   const resetCapture = useCallback(() => {
     segmenterRef.current.reset();
+    orientHistRef.current = [];
     setRecordingMs(0);
     setTopGuesses([]);
   }, []);

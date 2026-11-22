@@ -11,7 +11,7 @@ import { COLOR, FONT, RADIUS } from '../../../../styles/colors/theme';
 let lastSignRoute = 'Translator';
 
 export const MODE_TABS = [
-  { key: 'sign', label: 'Sign to Speech', route: null }, // resolved at press time
+  { key: 'sign', label: 'Sign to Speech', route: 'Translator' }, // TranslateModeScreen uses this as-is
   { key: 'speech', label: 'Speech to Sign', route: 'SpeechToSign' },
 ];
 
@@ -28,7 +28,7 @@ export default function ModeTabs({ active, signRoute }) {
           <TouchableOpacity
             key={t.key}
             style={[s.tab, isActive && s.tabActive]}
-            onPress={() => !isActive && navigation.replace(t.route || lastSignRoute)}
+            onPress={() => !isActive && navigation.replace(t.key === 'sign' ? lastSignRoute : t.route)}
             activeOpacity={0.85}
           >
             <Text style={[s.text, isActive && s.textActive]} numberOfLines={1}>
