@@ -14,8 +14,6 @@ import {
 import MaterialCommunityIcons from 'react-native-vector-icons/MaterialCommunityIcons';
 import { useAuth } from '../../../auth/services/AuthContext';
 import useProfilePhoto from '../../../../hooks/useProfilePhoto';
-// Shared, saved setting. Importing it also makes every Speech.speak() respect the switch.
-import { useAslSoundEnabled } from '../../../../utils/audioSettings';
 
 // Import local styling and shared global design tokens
 import { COLOR } from '../../../../styles/colors/theme';
@@ -87,8 +85,7 @@ export default function SettingsScreen() {
 
   const [notificationsEnabled, setNotificationsEnabled] = React.useState(true);
   const [biometricsEnabled, setBiometricsEnabled] = React.useState(false);
-  // Saved on the device and shared with the translators: off = nothing is read aloud.
-  const [aslSoundEnabled, setAslSoundEnabled] = useAslSoundEnabled();
+  const [aslSoundEnabled, setAslSoundEnabled] = React.useState(true);
 
   // Entrance animations
   const headerFade = useRef(new Animated.Value(0)).current;
@@ -213,10 +210,9 @@ export default function SettingsScreen() {
             }
           />
           <SettingsRow
-            icon={aslSoundEnabled ? 'volume-high' : 'volume-off'}
+            icon="volume-high"
             label="ASL Audio Output"
             sublabel="Read translations aloud"
-            onPress={() => setAslSoundEnabled(!aslSoundEnabled)}
             rightElement={
               <Switch
                 value={aslSoundEnabled}
