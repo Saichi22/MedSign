@@ -26,6 +26,7 @@ import { Worklets, useSharedValue } from 'react-native-worklets-core';
 import { loadTensorflowModel, TensorflowModel } from 'react-native-fast-tflite';
 import RNFS from 'react-native-fs';
 import Speech from '@mhpdev/react-native-speech';
+import { useAslSoundEnabled } from '../utils/audioSettings';
 import {
   decide,
   FEATURE_DIM,
@@ -380,6 +381,7 @@ export function useMotionSignTranslator() {
 
   // ─── Voice ─────────────────────────────────────────────────────────
   const [isVoiceEnabled, setIsVoiceEnabled] = useState(true);
+  const [aslSound] = useAslSoundEnabled(); // Settings > ASL Audio Output
   const lastSpokenRef = useRef<SignDetection | null>(null);
 
   useEffect(() => {
@@ -390,7 +392,7 @@ export function useMotionSignTranslator() {
   }, []);
 
   useEffect(() => {
-    if (!isVoiceEnabled) return;
+    if (!isVoiceEnabled || !aslSound) return;
     if (!detection) {
       lastSpokenRef.current = null;
       return;
@@ -406,7 +408,7 @@ export function useMotionSignTranslator() {
           console.warn('[MotionTranslator] speech error:', e),
         );
       });
-  }, [detection, isVoiceEnabled]);
+  }, [detection, isVoiceEnabled, aslSound]);
 
   const toggleVoice = useCallback(() => {
     setIsVoiceEnabled(prev => {
@@ -496,7 +498,7 @@ export function useMotionSignTranslator() {
     cardOpacity,
     cardScale,
     toggleDetection,
-    isVoiceEnabled,
+    isVoiceEnabled: isVoiceEnabled && aslSound, // header icon shows muted when Settings has audio off
     toggleVoice,
   };
 }
