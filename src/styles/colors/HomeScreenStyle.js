@@ -10,10 +10,9 @@ export const styles = StyleSheet.create({
 
   // ── Ambient page background ─────────────────────────────────────────────────
   // Two soft, out-of-focus color blobs anchored off-canvas top-left/bottom-right
-  // (teal + a warm amber accent, echoing the Saved Signs tint) plus a faint dot
-  // grid threaded through the middle of the page. Everything sits well under
-  // 6% opacity so it reads as paper texture, never competing with card content
-  // or text — the cards' own opaque backgrounds sit on top regardless.
+  // (teal + a warm amber accent) plus a faint dot grid threaded through the
+  // middle of the page. Everything sits well under ~7% opacity so it reads as
+  // paper texture, never competing with card content or text.
   pageBgLayer: {
     ...StyleSheet.absoluteFillObject,
     overflow: 'hidden',
@@ -25,7 +24,7 @@ export const styles = StyleSheet.create({
     width: 220,
     height: 220,
     borderRadius: 110,
-    backgroundColor: 'rgba(52, 233, 253, 0.3)',
+    backgroundColor: 'rgba(52, 233, 253, 0.06)',
   },
   pageBgBlobBottom: {
     position: 'absolute',
@@ -110,11 +109,10 @@ export const styles = StyleSheet.create({
     paddingBottom: 48,
   },
 
-  // ── Translator CTA (hero card) ──────────────────────────────────────────────
-  // Solid hero card that replaces the old live-camera viewfinder. Deliberately
-  // a darker, denser teal than the header (#0D2B2E vs tealDeep) with an offset
-  // dual-glow + faint pulse-line watermark, so it reads as its own surface
-  // rather than a continuation of the header band above it.
+  // ── Hero card (Translator / Motion / Learn / Dictionary) ────────────────────
+  // Deliberately a darker, denser teal than the header (#0D2B2E vs tealDeep)
+  // with a glow, graph-paper grid and faint watermark, so it reads as its own
+  // surface rather than a continuation of the header band above it.
   translatorCard: {
     backgroundColor: '#0D2B2E',
     borderRadius: RADIUS.xl,
@@ -126,15 +124,6 @@ export const styles = StyleSheet.create({
     shadowRadius: 22,
     elevation: 6,
   },
-  translatorGlowTop: {
-    position: 'absolute',
-    top: -40,
-    left: -40,
-    width: 140,
-    height: 140,
-    borderRadius: 70,
-    backgroundColor: 'rgba(10,155,170,0.35)',
-  },
   translatorGlowBottom: {
     position: 'absolute',
     bottom: -70,
@@ -144,9 +133,8 @@ export const styles = StyleSheet.create({
     borderRadius: 100,
     backgroundColor: 'rgba(126,221,227,0.16)',
   },
-  // Graph-paper style grid — gives the card real texture instead of a flat
-  // fill. Lines are hairline and low-opacity so they read as a surface
-  // material, not as content competing with the text.
+  // Graph-paper style grid — hairline and low-opacity so it reads as a
+  // surface material, not as content competing with the text.
   translatorGridLayer: {
     ...StyleSheet.absoluteFillObject,
   },
@@ -190,11 +178,13 @@ export const styles = StyleSheet.create({
     borderColor: 'rgba(255, 255, 255, 0.2)',
     alignItems: 'center',
     justifyContent: 'center',
+    overflow: 'hidden',
   },
+  // Sized to fit comfortably inside the 44×44 icon wrapper.
   translatorCustomIcon: {
-    width: 56,  
-    height: 56,  
-    tintColor: '#ffffff', 
+    width: 30,
+    height: 30,
+    tintColor: '#ffffff',
   },
   translatorLiveBadge: {
     flexDirection: 'row',
@@ -268,191 +258,13 @@ export const styles = StyleSheet.create({
     marginBottom: 10,
   },
 
-  // ── Phrasebook Card ───────────────────────────────────────────────────────────
-  phrasebookCard: {
-    backgroundColor: COLOR.bgCard,
-    borderRadius: RADIUS.xl,
-    borderWidth: 1,
-    borderColor: COLOR.borderCard,
-    flexDirection: 'row',
-    overflow: 'hidden',
-    shadowColor: COLOR.tealDeep,
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.07,
-    shadowRadius: 14,
-    elevation: 3,
-  },
-  phrasebookCardBody: {
-    flex: 1,
-    padding: 18,
-  },
-  phrasebookCardTop: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-    marginBottom: 12,
-  },
-  phrasebookIconWrap: {
-    width: 38,
-    height: 38,
-    borderRadius: RADIUS.sm,
-    backgroundColor: COLOR.tealGlow,
-    borderWidth: 1,
-    borderColor: 'rgba(10,155,170,0.18)',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  phrasebookFslBadge: {
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: RADIUS.pill,
-    backgroundColor: 'rgba(10,155,170,0.08)',
-    borderWidth: 1,
-    borderColor: 'rgba(10,155,170,0.18)',
-  },
-  phrasebookFslBadgeText: {
-    fontFamily: FONT.sans,
-    fontSize: 10,
-    fontWeight: '700',
-    color: COLOR.tealBright,
-    letterSpacing: 0.8,
-  },
-  phrasebookCardTitle: {
-    fontFamily: FONT.serif,
-    fontSize: 17,
-    color: COLOR.inkPrimary,
-    letterSpacing: -0.2,
-    marginBottom: 4,
-  },
-  phrasebookCardSub: {
-    fontFamily: FONT.sans,
-    fontSize: 12,
-    color: COLOR.inkFaint,
-    lineHeight: 17,
-    marginBottom: 14,
-  },
-  phrasebookChipsRow: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 6,
-    marginBottom: 14,
-  },
-  phrasebookChip: {
-    paddingHorizontal: 9,
-    paddingVertical: 4,
-    borderRadius: RADIUS.pill,
-    backgroundColor: COLOR.bgPage,
-    borderWidth: 1,
-    borderColor: COLOR.borderCard,
-  },
-  phrasebookChipText: {
-    fontFamily: FONT.sans,
-    fontSize: 10,
-    fontWeight: '600',
-    color: COLOR.inkMuted,
-    letterSpacing: 0.3,
-  },
-  phrasebookChipMore: {
-    paddingHorizontal: 9,
-    paddingVertical: 4,
-    borderRadius: RADIUS.pill,
-    backgroundColor: COLOR.tealGlow,
-    borderWidth: 1,
-    borderColor: 'rgba(10,155,170,0.18)',
-  },
-  phrasebookChipMoreText: {
-    fontFamily: FONT.sans,
-    fontSize: 10,
-    fontWeight: '700',
-    color: COLOR.tealBright,
-    letterSpacing: 0.2,
-  },
-  phrasebookOpenRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-  },
-  phrasebookOpenText: {
-    fontFamily: FONT.sans,
-    fontSize: 12,
-    fontWeight: '700',
-    color: COLOR.tealBright,
-    letterSpacing: 0.2,
-  },
-
-  // Decorative right panel
-  phrasebookCardDeco: {
-    width: 72,
-    backgroundColor: 'rgba(10,155,170,0.04)',
-    borderLeftWidth: 1,
-    borderLeftColor: COLOR.borderCard,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  decoCircleOuter: {
-    width: 52,
-    height: 52,
-    borderRadius: 26,
-    backgroundColor: 'rgba(10,155,170,0.07)',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  decoCircleInner: {
-    width: 38,
-    height: 38,
-    borderRadius: 19,
-    backgroundColor: 'rgba(10,155,170,0.10)',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-
-  // ── Quick Actions (organized as a clean list of rows, each independently
-  //    tappable, each with its own tinted icon so the four actions read as
-  //    distinct destinations rather than a generic grid) ──────────────────────
-  quickList: {
-    gap: 10,
-  },
-  quickCard: {
-    backgroundColor: COLOR.bgCard,
-    borderRadius: RADIUS.md,
-    borderWidth: 1,
-    borderColor: COLOR.borderCard,
-    paddingHorizontal: 14,
-    paddingVertical: 14,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-    shadowColor: COLOR.tealDeep,
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.05,
-    shadowRadius: 8,
-    elevation: 2,
-  },
-  quickIconWrap: {
-    width: 40,
-    height: 40,
-    borderRadius: RADIUS.sm,
-    backgroundColor: COLOR.tealGlow,
-    borderWidth: 1,
-    borderColor: 'rgba(10,155,170,0.15)',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  quickLabel: {
-    fontFamily: FONT.sans,
-    fontSize: 13.5,
-    fontWeight: '600',
-    color: COLOR.inkPrimary,
-    lineHeight: 17,
-  },
-  quickSublabel: {
-    fontFamily: FONT.sans,
-    fontSize: 11,
-    color: COLOR.inkFaint,
-    marginTop: 2,
+  // ── Spacing between stacked hero cards ──────────────────────────────────────
+  heroGap: {
+    marginBottom: 16,
   },
 
   // ── Misc (kept for RecentRow compatibility) ───────────────────────────────────
+  // Not used by HomeScreen. Delete this block if RecentRow no longer exists.
   card: {
     backgroundColor: COLOR.bgCard,
     borderRadius: RADIUS.lg,
@@ -515,53 +327,5 @@ export const styles = StyleSheet.create({
     fontWeight: '600',
     color: COLOR.tealBright,
     letterSpacing: 0.2,
-  },
-
-  // ── Emergency button (top of Home) ──────────────────────────────────────────
-  // ── Emergency button (top of Home) ──────────────────────────────────────────
-  emergencyBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-    backgroundColor: COLOR.tealDeep,
-    borderWidth: 1,
-    borderColor: 'rgba(126,221,227,0.30)',
-    borderRadius: RADIUS.lg,
-    paddingHorizontal: 16,
-    height: 66,
-    marginBottom: 0,
-    shadowColor: COLOR.tealDeep,
-    shadowOffset: { width: 0, height: 6 },
-    shadowOpacity: 0.28,
-    shadowRadius: 14,
-    elevation: 6,
-  },
-  emergencyIconWrap: {
-    width: 40,
-    height: 40,
-    borderRadius: RADIUS.sm,
-    backgroundColor: 'rgba(126,221,227,0.16)',
-    borderWidth: 1,
-    borderColor: 'rgba(126,221,227,0.30)',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  emergencyTitle: {
-    fontFamily: FONT.sans,
-    fontSize: 15,
-    fontWeight: '800',
-    color: COLOR.white,
-    letterSpacing: 0.4,
-  },
-  emergencySub: {
-    fontFamily: FONT.sans,
-    fontSize: 11.5,
-    color: 'rgba(255,255,255,0.80)',
-    marginTop: 1,
-  },
-
-  // ── Spacing between stacked hero cards ──────────────────────────────────────
-  heroGap: {
-    marginBottom: 16,
   },
 });

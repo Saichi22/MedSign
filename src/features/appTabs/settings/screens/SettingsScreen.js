@@ -11,6 +11,7 @@ import {
   ActivityIndicator,
   StyleSheet,
 } from 'react-native';
+import { useNavigation } from '@react-navigation/native';
 import MaterialCommunityIcons from 'react-native-vector-icons/MaterialCommunityIcons';
 import { useAuth } from '../../../auth/services/AuthContext';
 import useProfilePhoto from '../../../../hooks/useProfilePhoto';
@@ -75,6 +76,7 @@ function SectionHeader({ title, icon }) {
 
 // ─── Main SettingsScreen ──────────────────────────────────────────────────────
 export default function SettingsScreen() {
+  const navigation = useNavigation();
   const { user, logout } = useAuth();
   // Only accounts created with email + password get the Account section.
   // Google / Facebook users manage these details through their provider.
@@ -183,13 +185,13 @@ export default function SettingsScreen() {
 
         {isEmailAccount && (
           <>
-          {/* ── Account ───────────────────────────────────────────────── */}
-          <SectionHeader title="ACCOUNT" icon="account-circle-outline" />
-          <View style={styles.card}>
-            <SettingsRow icon="account-edit-outline" label="Edit Profile" sublabel="Name, photo, specialty" onPress={choosePhoto} />
-            <SettingsRow icon="email-outline" label="Email Address" sublabel={user?.email || '—'} />
-            <SettingsRow icon="lock-reset" label="Change Password" sublabel="Last changed 30 days ago" isLast />
-          </View>
+            {/* ── Account ───────────────────────────────────────────── */}
+            <SectionHeader title="ACCOUNT" icon="account-circle-outline" />
+            <View style={styles.card}>
+              <SettingsRow icon="account-edit-outline" label="Edit Profile" sublabel="Name, photo, specialty" onPress={choosePhoto} />
+              <SettingsRow icon="email-outline" label="Email Address" sublabel={user?.email || '—'} />
+              <SettingsRow icon="lock-reset" label="Change Password" sublabel="Last changed 30 days ago" isLast />
+            </View>
           </>
         )}
 
@@ -248,9 +250,24 @@ export default function SettingsScreen() {
         {/* ── Support ───────────────────────────────────────────────── */}
         <SectionHeader title="SUPPORT" icon="lifebuoy" />
         <View style={styles.card}>
-          <SettingsRow icon="help-circle-outline" label="Help & FAQ" sublabel="Browse common questions" />
-          <SettingsRow icon="headset" label="Contact IT Support" sublabel="24/7 helpdesk" />
-          <SettingsRow icon="file-document-outline" label="Privacy Policy" isLast />
+          <SettingsRow
+            icon="help-circle-outline"
+            label="Help & FAQ"
+            sublabel="Browse common questions"
+            onPress={() => navigation.navigate('HelpFAQ')}
+          />
+          <SettingsRow
+            icon="headset"
+            label="Contact IT Support"
+            sublabel="24/7 helpdesk"
+            onPress={() => navigation.navigate('ContactSupport')}
+          />
+          <SettingsRow
+            icon="file-document-outline"
+            label="Privacy Policy"
+            onPress={() => navigation.navigate('PrivacyPolicy')}
+            isLast
+          />
         </View>
 
         {/* ── Session ───────────────────────────────────────────────── */}

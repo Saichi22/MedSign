@@ -12,6 +12,9 @@ import RegisterScreen from '../auth/screens/RegisterScreen';
 import ForgotPasswordScreen from '../auth/screens/ForgotPasswordScreen';
 import HomeScreen from '../appTabs/home/screens/HomeScreen';
 import SettingsScreen from '../appTabs/settings/screens/SettingsScreen';
+import HelpFAQScreen from '../appTabs/settings/screens/HelpFAQScreen';
+import ContactSupportScreen from '../appTabs/settings/screens/ContactSupportScreen';
+import PrivacyPolicyScreen from '../appTabs/settings/screens/PrivacyPolicyScreen';
 import TranslatorScreen from '../appTabs/home/screens/TranslatorScreen';
 import SpeechToSignScreen from '../appTabs/home/screens/SpeechToSignScreen';
 import LearnScreen from '../appTabs/home/screens/LearnScreen';
@@ -94,12 +97,12 @@ function AppStack() {
     <Stack.Navigator screenOptions={{ headerShown: false }}>
       {/* Main Bottom Tabs Group */}
       <Stack.Screen name="MainTabs" component={AppTabs} />
-      
+
       {/* Hidden Screens inside the authenticated flow */}
-      <Stack.Screen 
-        name="Translator" 
-        component={TranslatorScreen} 
-        options={{ headerShown: false, title: 'Translator' }} 
+      <Stack.Screen
+        name="Translator"
+        component={TranslatorScreen}
+        options={{ headerShown: false, title: 'Translator' }}
       />
       <Stack.Screen
         name="SpeechToSign"
@@ -126,15 +129,32 @@ function AppStack() {
         component={SignDetailScreen}
         options={{ headerShown: false, title: 'Sign' }}
       />
-            <Stack.Screen
+      <Stack.Screen
         name="TranslateMode"
         component={TranslateModeScreen}
         options={{ headerShown: false, title: 'Translate' }}
       />
-            <Stack.Screen
+      <Stack.Screen
         name="MotionTranslator"
         component={MotionTranslatorScreen}
         options={{ headerShown: false, title: 'Motion Translator' }}
+      />
+
+      {/* Support screens (opened from Settings) */}
+      <Stack.Screen
+        name="HelpFAQ"
+        component={HelpFAQScreen}
+        options={{ headerShown: false, title: 'Help & FAQ' }}
+      />
+      <Stack.Screen
+        name="ContactSupport"
+        component={ContactSupportScreen}
+        options={{ headerShown: false, title: 'Contact IT Support' }}
+      />
+      <Stack.Screen
+        name="PrivacyPolicy"
+        component={PrivacyPolicyScreen}
+        options={{ headerShown: false, title: 'Privacy Policy' }}
       />
     </Stack.Navigator>
   );

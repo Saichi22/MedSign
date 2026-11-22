@@ -8,6 +8,7 @@ import {
   StatusBar,
   Animated,
   Image,
+  StyleSheet,
 } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import MaterialCommunityIcons from 'react-native-vector-icons/MaterialCommunityIcons';
@@ -18,9 +19,17 @@ import { styles } from '../../../../styles/colors/HomeScreenStyle';
 import SignLanguageImg from '../../../../assets/images/signLanguage.png';
 import useProfilePhoto from '../../../../hooks/useProfilePhoto';
 
+// ─── Time-based greeting ──────────────────────────────────────────────────────
+function getGreeting() {
+  const hour = new Date().getHours();
+  if (hour < 12) return 'Good Morning,';
+  if (hour < 18) return 'Good Afternoon,';
+  return 'Good Evening,';
+}
 
 // ─── Reusable press-scale wrapper ──────────────────────────────────────────────
-function Pressable({ style, onPress, children }) {
+// (named PressScale so it doesn't shadow React Native's built-in Pressable)
+function PressScale({ style, onPress, children }) {
   const scale = useRef(new Animated.Value(1)).current;
   const pressIn  = () => Animated.spring(scale, { toValue: 0.97, useNativeDriver: true, tension: 120, friction: 8 }).start();
   const pressOut = () => Animated.spring(scale, { toValue: 1,    useNativeDriver: true, tension: 120, friction: 8 }).start();
@@ -49,7 +58,7 @@ function HeroCard({
   glow = 'rgba(126,221,227,0.16)',
 }) {
   return (
-    <Pressable style={styles.translatorCard} onPress={onPress}>
+    <PressScale style={styles.translatorCard} onPress={onPress}>
       {/* Decorative layers — purely visual, never intercept touches */}
       <View style={[styles.translatorGlowBottom, { backgroundColor: glow }]} pointerEvents="none" />
 
@@ -95,7 +104,7 @@ function HeroCard({
           <Text style={styles.translatorCtaText}>{ctaText}</Text>
         </View>
       </View>
-    </Pressable>
+    </PressScale>
   );
 }
 
@@ -104,7 +113,6 @@ export default function HomeScreen() {
   const { user } = useAuth();
   const navigation = useNavigation();
   const { uri: photoUri } = useProfilePhoto(user?.uid);
-
 
   // ── Entrance animations ───────────────────────────────────────────────────
   const headerFade   = useRef(new Animated.Value(0)).current;
@@ -131,7 +139,8 @@ export default function HomeScreen() {
     ]).start();
   }, []);
 
-  const firstName = user?.displayName?.split(' ')[0] || 'Doctor';
+  const firstName = user?.displayName?.split(' ')[0] || 'Welcome to MedSign';
+  const greeting = getGreeting();
 
   return (
     <View style={styles.root}>
@@ -139,6 +148,8 @@ export default function HomeScreen() {
 
       {/* ── Ambient page background ─────────────────────────────────────── */}
       <View style={styles.pageBgLayer} pointerEvents="none">
+        <View style={styles.pageBgBlobTop} />
+        <View style={styles.pageBgBlobBottom} />
         <View style={styles.pageDotGrid}>
           {Array.from({ length: 20 }).map((_, row) => (
             <View key={`row${row}`} style={styles.pageDotRow}>
@@ -155,14 +166,14 @@ export default function HomeScreen() {
         <View style={styles.headerBlob} />
         <View style={styles.headerTop}>
           <View>
-            <Text style={styles.headerGreeting}>Good Morning,</Text>
+            <Text style={styles.headerGreeting}>{greeting}</Text>
             <Text style={styles.headerName}>{firstName}</Text>
           </View>
-          <TouchableOpacity style={[styles.headerAvatar, { overflow: 'hidden' }]}>
+          <View style={[styles.headerAvatar, { overflow: 'hidden' }]}>
             {photoUri
               ? <Image source={{ uri: photoUri }} style={StyleSheet.absoluteFill} resizeMode="cover" />
               : <MaterialCommunityIcons name="account" size={22} color={COLOR.white} />}
-          </TouchableOpacity>
+          </View>
         </View>
       </Animated.View>
 
@@ -171,22 +182,23 @@ export default function HomeScreen() {
         contentContainerStyle={styles.scrollContent}
         showsVerticalScrollIndicator={false}
       >
-        {/* ── Emergency + Translator ───────────────────────────────────── */}
-        {/* ── Emergency + Translator ───────────────────────────────────── */}
+        {/* ── Translators ──────────────────────────────────────────────── */}
         <Animated.View style={{ opacity: cardFade, transform: [{ scale: cardScale }], marginBottom: 26 }}>
-          <Text style={styles.sectionLabel}>Sign Language Translator</Text>
+          <Text style={styles.sectionLabel}>SIGN LANGUAGE TRANSLATOR</Text>
+
           <View style={styles.heroGap}>
-          <HeroCard
-            onPress={() => navigation.navigate('TranslateMode')}
-            icon="hand-wave"
-            watermark="pulse"
-            badge="AI-POWERED"
-            title="MedSign Translator"
-            sub="Real-time Filipino Sign Language recognition for medical conversations"
-            ctaIcon="camera"
-            ctaText="Start Translation"
-          />
+            <HeroCard
+              onPress={() => navigation.navigate('TranslateMode')}
+              image={SignLanguageImg}
+              watermark="pulse"
+              badge="AI-POWERED"
+              title="MedSign Translator"
+              sub="Real-time Filipino Sign Language recognition for medical conversations"
+              ctaIcon="camera"
+              ctaText="Start Translation"
+            />
           </View>
+
           <View style={styles.heroGap}>
             <HeroCard
               onPress={() => navigation.navigate('MotionTranslator')}
@@ -233,10 +245,8 @@ export default function HomeScreen() {
               glow="rgba(245,158,11,0.20)"
             />
           </View>
-
         </Animated.View>
       </ScrollView>
-
     </View>
   );
 }
