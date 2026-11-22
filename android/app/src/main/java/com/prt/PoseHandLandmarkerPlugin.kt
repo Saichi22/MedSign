@@ -1,11 +1,11 @@
 package com.prt
 
 import android.graphics.Bitmap
+import android.graphics.Matrix
 import android.graphics.PixelFormat
 import android.os.SystemClock
 import com.google.mediapipe.framework.image.BitmapImageBuilder
 import com.google.mediapipe.tasks.core.BaseOptions
-import com.google.mediapipe.tasks.vision.core.ImageProcessingOptions
 import com.google.mediapipe.tasks.vision.core.RunningMode
 import com.google.mediapipe.tasks.vision.handlandmarker.HandLandmarker
 import com.google.mediapipe.tasks.vision.poselandmarker.PoseLandmarker
@@ -103,15 +103,23 @@ class PoseHandLandmarkerPlugin(proxy: VisionCameraProxy, options: Map<String, An
     }
 
     override fun callback(frame: Frame, arguments: Map<String, Any>?): Any? {
-        val bitmap = frameToBitmap(frame)
+        val raw = frameToBitmap(frame)
 
-        // Rotate to UPRIGHT (clockwise degrees). Never mirror (spec 4.2).
+        // Rotate the bitmap ourselves to UPRIGHT (clockwise degrees) so we do not depend on MediaPipe's
+        // rotation option. Never mirror (spec 4.2).
         val requested = (arguments?.get("rotation") as? Number)?.toInt() ?: -1
-        val rotation = if (requested >= 0) requested else DEFAULT_ROTATION
-        val procOptions = ImageProcessingOptions.builder().setRotationDegrees(rotation).build()
-        val swapped = rotation == 90 || rotation == 270
-        val w = if (swapped) bitmap.height else bitmap.width
-        val h = if (swapped) bitmap.width else bitmap.height
+        val rotation = (((if (requested >= 0) requested else DEFAULT_ROTATION) % 360) + 360) % 360
+        val bitmap: Bitmap = if (rotation == 0) {
+            raw
+        } else {
+            val m = Matrix()
+            m.postRotate(rotation.toFloat()) // clockwise
+            val r = Bitmap.createBitmap(raw, 0, 0, raw.width, raw.height, m, true)
+            raw.recycle()
+            r
+        }
+        val w = bitmap.width
+        val h = bitmap.height
 
         val mpImage = BitmapImageBuilder(bitmap).build()
 
@@ -121,8 +129,8 @@ class PoseHandLandmarkerPlugin(proxy: VisionCameraProxy, options: Map<String, An
         lastTs = ts
 
         // Same frame, same timestamp, both landmarkers
-        val handRes = hand.detectForVideo(mpImage, procOptions, ts)
-        val poseRes = pose.detectForVideo(mpImage, procOptions, ts)
+        val handRes = hand.detectForVideo(mpImage, ts)
+        val poseRes = pose.detectForVideo(mpImage, ts)
 
         val poseOut = ArrayList<Double>()
         val poseLms = poseRes.landmarks()
