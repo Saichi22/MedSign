@@ -1,5 +1,7 @@
 package com.prt
 
+import android.graphics.Bitmap
+import android.graphics.PixelFormat
 import android.os.SystemClock
 import com.google.mediapipe.framework.image.BitmapImageBuilder
 import com.google.mediapipe.tasks.core.BaseOptions
@@ -10,21 +12,31 @@ import com.google.mediapipe.tasks.vision.poselandmarker.PoseLandmarker
 import com.mrousavy.camera.frameprocessors.Frame
 import com.mrousavy.camera.frameprocessors.FrameProcessorPlugin
 import com.mrousavy.camera.frameprocessors.VisionCameraProxy
+import java.nio.ByteBuffer
 
 /**
  * FSL16 TCN landmark plugin (spec v2.0, section 4).  Replaces HandLandmarkerPlugin ("detectHands").
  *
  * Runs MediaPipe Pose Landmarker AND Hand Landmarker on the SAME frame, on an UPRIGHT, NOT-mirrored
  * image, and returns raw normalised landmarks. Slot assignment (left/right hand), the 59x3 layout and
- * all maths are done in TypeScript (utils/fslPreprocess.ts) where they are tested against the
- * reference vectors.
+ * all maths are done in TypeScript (utils/fslPreprocess.ts).
  *
- * JS call:  plugin.call(frame, { rotation: -1 | 0 | 90 | 180 | 270 })   // -1 = use the camera's orientation
+ * JS call:  plugin.call(frame, { rotation: -1 | 0 | 90 | 180 | 270 })
+ *           -1 (the "AUTO" badge) = DEFAULT_ROTATION below. Tap the rotation badge on screen to try others.
  * Returns:  { w, h, ts, pose: [x0,y0,...x16,y16] | [], hands: [{ lm: [x,y,z * 21], label }] }
- *           w,h = size of the upright image; x,y,z normalised exactly as MediaPipe reports them.
+ *           w,h = size of the upright image.
+ *
+ * Needs the camera to deliver RGBA frames: <Camera pixelFormat="rgb" /> (already set in the screen).
  */
 class PoseHandLandmarkerPlugin(proxy: VisionCameraProxy, options: Map<String, Any>?) :
     FrameProcessorPlugin() {
+
+    companion object {
+        // Clockwise degrees that make the camera image upright. Your earlier testing found 270 for the
+        // front camera. If the debug line says SIDEWAYS/UPSIDE-DOWN, use the rotation badge to find the
+        // right value, then change it here.
+        const val DEFAULT_ROTATION = 270
+    }
 
     private val hand: HandLandmarker
     private val pose: PoseLandmarker
@@ -57,14 +69,45 @@ class PoseHandLandmarkerPlugin(proxy: VisionCameraProxy, options: Map<String, An
         )
     }
 
-    override fun callback(frame: Frame, arguments: Map<String, Any>?): Any? {
-        // ── 1. frame -> Bitmap.  If your HandLandmarkerPlugin.kt already converts the Frame to a
-        //       Bitmap (it must, to feed MediaPipe), reuse that exact conversion here.
-        val bitmap = frame.imageProxy.toBitmap()
+    /** RGBA_8888 camera image -> Bitmap (handles row padding). No CameraX classes needed. */
+    private fun frameToBitmap(frame: Frame): Bitmap {
+        val image = frame.image
+        if (image.format != PixelFormat.RGBA_8888) {
+            throw IllegalStateException(
+                "detectLandmarks needs RGBA frames (Camera pixelFormat=\"rgb\"), got image format ${image.format}"
+            )
+        }
+        val w = image.width
+        val h = image.height
+        val plane = image.planes[0]
+        val rowStride = plane.rowStride
+        val src: ByteBuffer = plane.buffer
+        src.rewind()
 
-        // ── 2. rotate to UPRIGHT (clockwise degrees). Never mirror (spec 4.2).
+        val bmp = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+        if (rowStride == w * 4) {
+            bmp.copyPixelsFromBuffer(src)
+        } else {
+            // rows are padded: copy row by row into a tight buffer
+            val tight = ByteBuffer.allocateDirect(w * 4 * h)
+            val row = ByteArray(w * 4)
+            for (y in 0 until h) {
+                src.position(y * rowStride)
+                src.get(row, 0, w * 4)
+                tight.put(row)
+            }
+            tight.rewind()
+            bmp.copyPixelsFromBuffer(tight)
+        }
+        return bmp
+    }
+
+    override fun callback(frame: Frame, arguments: Map<String, Any>?): Any? {
+        val bitmap = frameToBitmap(frame)
+
+        // Rotate to UPRIGHT (clockwise degrees). Never mirror (spec 4.2).
         val requested = (arguments?.get("rotation") as? Number)?.toInt() ?: -1
-        val rotation = if (requested >= 0) requested else frame.orientation.toDegrees()
+        val rotation = if (requested >= 0) requested else DEFAULT_ROTATION
         val procOptions = ImageProcessingOptions.builder().setRotationDegrees(rotation).build()
         val swapped = rotation == 90 || rotation == 270
         val w = if (swapped) bitmap.height else bitmap.width
@@ -77,11 +120,10 @@ class PoseHandLandmarkerPlugin(proxy: VisionCameraProxy, options: Map<String, An
         if (ts <= lastTs) ts = lastTs + 1
         lastTs = ts
 
-        // ── 3. same frame, same timestamp, both landmarkers
+        // Same frame, same timestamp, both landmarkers
         val handRes = hand.detectForVideo(mpImage, procOptions, ts)
         val poseRes = pose.detectForVideo(mpImage, procOptions, ts)
 
-        // ── 4. pack the result (plain lists/maps/doubles are supported by VisionCamera)
         val poseOut = ArrayList<Double>()
         val poseLms = poseRes.landmarks()
         if (poseLms.isNotEmpty()) {
@@ -105,6 +147,8 @@ class PoseHandLandmarkerPlugin(proxy: VisionCameraProxy, options: Map<String, An
             entry["label"] = if (k < handed.size && handed[k].isNotEmpty()) handed[k][0].categoryName() else ""
             handsOut.add(entry)
         }
+
+        bitmap.recycle()
 
         val out = HashMap<String, Any>()
         out["w"] = w.toDouble()
