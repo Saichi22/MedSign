@@ -238,6 +238,8 @@ export default function MotionTranslatorScreen() {
     isVoiceEnabled,
     toggleVoice,
     rotation,
+    autoRot,
+    autoLocked,
     toggleRotation,
     debugText,
   } = useMotionSignTranslator();
@@ -310,7 +312,7 @@ export default function MotionTranslatorScreen() {
             >
               <MaterialCommunityIcons name="rotate-right" size={16} color={COLOR.tealBright} />
               <Text style={[styles.liveText, { color: COLOR.tealBright }]}>
-                {rotation === 'auto' ? 'AUTO' : rotation}
+                {rotation === 'auto' ? `AUTO ${autoRot}${autoLocked ? '✓' : '…'}` : rotation}
               </Text>
             </TouchableOpacity>
 

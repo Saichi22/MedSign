@@ -107,6 +107,10 @@ function orientationCode(res: LandmarkResult): 'U' | 'S' | 'D' | '-' {
 }
 
 const ORIENT_WINDOW = 20; // frames used for the on-screen majority vote
+// AUTO rotation: starts here, then steps through 0/90/180/270 until the pose reads UPRIGHT.
+const AUTO_START_ROTATION = 270;
+const AUTO_MIN_POSE_FRAMES = 15; // pose frames needed before judging a rotation
+const AUTO_LOCK_FRACTION = 0.75; // this share of UPRIGHT frames locks the rotation
 function orientationSummary(hist: string[]): string {
   const n = (c: string) => hist.filter(h => h === c).length;
   const U = n('U'), S = n('S'), D = n('D');
@@ -152,7 +156,7 @@ export function useMotionSignTranslator() {
 
   const isDetectingRef = useRef(false);
   const detectingSV = useSharedValue(false); // read inside the frame processor worklet
-  const rotationSV = useSharedValue(-1); // -1 = auto; else 0/90/180/270
+  const rotationSV = useSharedValue(AUTO_START_ROTATION); // always an explicit 0/90/180/270
   const segmenterRef = useRef(new SignSegmenter());
   const lastUiMsRef = useRef(0);
   const lastDebugMsRef = useRef(0);
@@ -160,6 +164,11 @@ export function useMotionSignTranslator() {
   const orientHistRef = useRef<string[]>([]);
 
   const [rotation, setRotation] = useState<RotationSetting>('auto');
+  const rotationRef = useRef<RotationSetting>('auto');
+  const autoRotRef = useRef<number>(AUTO_START_ROTATION); // rotation AUTO is currently trying
+  const autoLockedRef = useRef(false);
+  const [autoRot, setAutoRot] = useState<number>(AUTO_START_ROTATION);
+  const [autoLocked, setAutoLocked] = useState(false);
 
   const cardOpacity = useRef(new Animated.Value(0)).current;
   const cardScale = useRef(new Animated.Value(0.85)).current;
@@ -263,6 +272,32 @@ export function useMotionSignTranslator() {
       const oh = orientHistRef.current;
       oh.push(orientationCode(res));
       if (oh.length > ORIENT_WINDOW) oh.shift();
+
+      // ── AUTO rotation: find the rotation at which the pose reads UPRIGHT, then lock it.
+      // Until then frames are NOT fed to the segmenter (a wrong rotation gives garbage geometry).
+      if (rotationRef.current === 'auto' && !autoLockedRef.current) {
+        const valid = oh.filter(c => c !== '-');
+        if (valid.length >= AUTO_MIN_POSE_FRAMES) {
+          const cnt = (c: string) => valid.filter(x => x === c).length;
+          const U = cnt('U'), S = cnt('S'), D = cnt('D');
+          if (U / valid.length >= AUTO_LOCK_FRACTION) {
+            autoLockedRef.current = true;
+            setAutoLocked(true);
+          } else {
+            // upside-down -> half a turn; sideways -> quarter turn
+            const next = (autoRotRef.current + (D > S ? 180 : 90)) % 360;
+            autoRotRef.current = next;
+            rotationSV.value = next;
+            setAutoRot(next);
+          }
+          oh.length = 0;
+        }
+        setDebugText(
+          `calibrating rotation… trying ${autoRotRef.current} | ${orientationSummary(oh)}\n` +
+            'sit so head + both shoulders are in view',
+        );
+        return;
+      }
       const ts = res.ts > 0 ? res.ts : Date.now();
       const ev = seg.push(frame, ts);
 
@@ -306,7 +341,7 @@ export function useMotionSignTranslator() {
         }
       }
     },
-    [classify, setStatus],
+    [classify, setStatus, rotationSV],
   );
 
   const handleLandmarksJS = useMemo(() => Worklets.createRunOnJS(handleLandmarks), [handleLandmarks]);
@@ -337,6 +372,7 @@ export function useMotionSignTranslator() {
   const toggleCamera = useCallback(() => {
     if (!backDevice || !frontDevice) return;
     resetCapture();
+    if (rotationRef.current === 'auto') { autoLockedRef.current = false; setAutoLocked(false); }
     setDetection(null);
     setStatus(isDetectingRef.current ? 'waiting' : 'idle');
     setCameraPosition(prev => (prev === 'front' ? 'back' : 'front'));
@@ -418,7 +454,16 @@ export function useMotionSignTranslator() {
   // ─── Rotation (debug aid; 'auto' should normally be right) ─────────
   const toggleRotation = useCallback(() => {
     const next = ROTATION_CYCLE[(ROTATION_CYCLE.indexOf(rotation) + 1) % ROTATION_CYCLE.length];
-    rotationSV.value = next === 'auto' ? -1 : next;
+    rotationRef.current = next;
+    if (next === 'auto') {
+      autoLockedRef.current = false;
+      autoRotRef.current = AUTO_START_ROTATION;
+      rotationSV.value = AUTO_START_ROTATION;
+      setAutoLocked(false);
+      setAutoRot(AUTO_START_ROTATION);
+    } else {
+      rotationSV.value = next;
+    }
     setRotation(next);
     resetCapture();
     setDetection(null);
@@ -426,6 +471,8 @@ export function useMotionSignTranslator() {
 
   return {
     rotation,
+    autoRot,
+    autoLocked,
     toggleRotation,
     debugText,
     hasPermission,
