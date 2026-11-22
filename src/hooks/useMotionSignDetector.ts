@@ -59,7 +59,7 @@ export const FSL16_LABELS: string[] = FALLBACK_LABELS;
 
 // ─── Constants ───────────────────────────────────────────────────────────────
 // Spec: 15-30 fps works because every segment is resampled to 40 frames.
-const PROCESS_FPS = 15;
+const PROCESS_FPS = 20; // only the quick bitmap copy runs per call; the plugin skips frames while it is busy
 const DEBUG_TCN = true; // logs top-3 for every sign and shows a debug line on screen
 
 // Rotation (degrees clockwise) applied to the camera frame before MediaPipe so it is UPRIGHT.
@@ -323,7 +323,7 @@ export function useMotionSignTranslator() {
 
       if (DEBUG_TCN) {
         const now = Date.now();
-        if (now - lastDebugMsRef.current > 250 || ev.type !== 'none') {
+        if (now - lastDebugMsRef.current > 600 || ev.type !== 'none') {
           lastDebugMsRef.current = now;
           const hasL = !Number.isNaN(frame[L_OFF * 3]);
           const hasR = !Number.isNaN(frame[R_OFF * 3]);

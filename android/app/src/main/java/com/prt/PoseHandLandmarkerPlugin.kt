@@ -4,6 +4,7 @@ import android.graphics.Bitmap
 import android.graphics.Matrix
 import android.graphics.PixelFormat
 import android.os.SystemClock
+import android.util.Log
 import com.google.mediapipe.framework.image.BitmapImageBuilder
 import com.google.mediapipe.tasks.core.BaseOptions
 import com.google.mediapipe.tasks.vision.core.RunningMode
@@ -13,6 +14,8 @@ import com.mrousavy.camera.frameprocessors.Frame
 import com.mrousavy.camera.frameprocessors.FrameProcessorPlugin
 import com.mrousavy.camera.frameprocessors.VisionCameraProxy
 import java.nio.ByteBuffer
+import java.util.concurrent.Executors
+import java.util.concurrent.atomic.AtomicBoolean
 
 /**
  * FSL16 TCN landmark plugin (spec v2.0, section 4).  Replaces HandLandmarkerPlugin ("detectHands").
@@ -41,6 +44,14 @@ class PoseHandLandmarkerPlugin(proxy: VisionCameraProxy, options: Map<String, An
     private val hand: HandLandmarker
     private val pose: PoseLandmarker
     private var lastTs = 0L
+
+    // Heavy MediaPipe work runs on this background thread so the camera's frame thread returns in a
+    // few ms. If it is still busy, new frames are simply skipped. The finished result is handed to JS on
+    // the next call (about one frame of delay).
+    private val executor = Executors.newSingleThreadExecutor()
+    private val busy = AtomicBoolean(false)
+    private val lock = Any()
+    private var pending: HashMap<String, Any>? = null
 
     init {
         val ctx = proxy.context
@@ -103,24 +114,50 @@ class PoseHandLandmarkerPlugin(proxy: VisionCameraProxy, options: Map<String, An
     }
 
     override fun callback(frame: Frame, arguments: Map<String, Any>?): Any? {
-        val raw = frameToBitmap(frame)
+        // 1. hand back the last finished result (once). Drop it if it is stale (e.g. after a pause).
+        val ready: HashMap<String, Any>? = synchronized(lock) {
+            val r = pending
+            pending = null
+            r
+        }
+        val fresh = if (ready != null && SystemClock.uptimeMillis() - (ready["ts"] as Double) < 1000) ready else null
 
-        // Rotate the bitmap ourselves to UPRIGHT (clockwise degrees) so we do not depend on MediaPipe's
-        // rotation option. Never mirror (spec 4.2).
+        // 2. still busy with the previous frame -> skip this one (cheap)
+        if (busy.get()) return fresh
+
+        // 3. quick part on the frame thread: copy + rotate the picture (clockwise degrees, never mirrored)
+        val raw = frameToBitmap(frame)
         val requested = (arguments?.get("rotation") as? Number)?.toInt() ?: -1
         val rotation = (((if (requested >= 0) requested else DEFAULT_ROTATION) % 360) + 360) % 360
         val bitmap: Bitmap = if (rotation == 0) {
             raw
         } else {
             val m = Matrix()
-            m.postRotate(rotation.toFloat()) // clockwise
+            m.postRotate(rotation.toFloat())
             val r = Bitmap.createBitmap(raw, 0, 0, raw.width, raw.height, m, true)
             raw.recycle()
             r
         }
+
+        // 4. heavy part (pose + hands) on the background thread
+        busy.set(true)
+        executor.execute {
+            try {
+                val res = infer(bitmap)
+                synchronized(lock) { pending = res }
+            } catch (e: Throwable) {
+                Log.e("PoseHandPlugin", "inference failed", e)
+            } finally {
+                bitmap.recycle()
+                busy.set(false)
+            }
+        }
+        return fresh
+    }
+
+    private fun infer(bitmap: Bitmap): HashMap<String, Any> {
         val w = bitmap.width
         val h = bitmap.height
-
         val mpImage = BitmapImageBuilder(bitmap).build()
 
         // VIDEO mode needs strictly increasing timestamps
@@ -128,7 +165,7 @@ class PoseHandLandmarkerPlugin(proxy: VisionCameraProxy, options: Map<String, An
         if (ts <= lastTs) ts = lastTs + 1
         lastTs = ts
 
-        // Same frame, same timestamp, both landmarkers
+        // Same image, same timestamp, both landmarkers
         val handRes = hand.detectForVideo(mpImage, ts)
         val poseRes = pose.detectForVideo(mpImage, ts)
 
@@ -155,8 +192,6 @@ class PoseHandLandmarkerPlugin(proxy: VisionCameraProxy, options: Map<String, An
             entry["label"] = if (k < handed.size && handed[k].isNotEmpty()) handed[k][0].categoryName() else ""
             handsOut.add(entry)
         }
-
-        bitmap.recycle()
 
         val out = HashMap<String, Any>()
         out["w"] = w.toDouble()
