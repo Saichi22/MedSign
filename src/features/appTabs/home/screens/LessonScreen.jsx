@@ -658,9 +658,9 @@ export default function LessonScreen() {
                 <Text style={local.targetEyebrow}>SHOW THIS SIGN</Text>
                 <Text style={local.targetFsl}>{practiceCard.fsl}</Text>
                 <Text style={local.targetEnglish}>{practiceCard.english}</Text>
-                {practiceImg ? (
+                {/* {practiceImg ? (
                   <Image source={practiceImg} style={local.targetImg} resizeMode="contain" />
-                ) : null}
+                ) : null} */}
               </View>
               <PracticeCamera practice={practice} active={isPractice} />
             </>
